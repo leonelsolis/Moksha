@@ -160,6 +160,13 @@ const PATHS = {
       <line x1="8" y1="8" x2="8.1" y2="8" />
     </>
   ),
+  /** Chinche: la dirección del local en el mapa. */
+  pin: (
+    <>
+      <path d="M12 21.25s7-5.75 7-11.25a7 7 0 1 0-14 0c0 5.5 7 11.25 7 11.25z" />
+      <circle cx="12" cy="9.75" r="2.75" />
+    </>
+  ),
   /** Sombrilla: señala a una profesional de vacaciones. */
   vacation: (
     <>

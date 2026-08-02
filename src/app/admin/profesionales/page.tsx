@@ -11,6 +11,7 @@ import {
   removeProfessionalPhoto,
   uploadProfessionalPhoto,
 } from "@/app/actions/photos";
+import { createProfessionalWithAccount } from "@/app/actions/users";
 import { Icon } from "@/components/Icon";
 import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
 import { ImageUpload } from "@/components/admin/ImageUpload";
@@ -375,20 +376,28 @@ export default async function ProfessionalsPage() {
       <section className="panel overflow-hidden">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-medium">Agregar una profesional</h2>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            Se crea su ficha y su cuenta para entrar al panel, todo junto.
+          </p>
         </div>
 
-        <ActionForm action={saveProfessional} className="p-4" resetOnSuccess>
-          <input type="hidden" name="active" value="on" />
-
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="min-w-44 flex-1">
+        <ActionForm action={createProfessionalWithAccount} className="p-4" resetOnSuccess>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
               <label className="field-label" htmlFor="new-name">
                 Nombre
               </label>
-              <input id="new-name" name="name" className="input" required maxLength={60} />
+              <input
+                id="new-name"
+                name="name"
+                className="input"
+                placeholder="Bianca Maidana"
+                required
+                maxLength={60}
+              />
             </div>
 
-            <div className="min-w-44 flex-1">
+            <div>
               <label className="field-label" htmlFor="new-specialty">
                 Qué hace
               </label>
@@ -401,15 +410,72 @@ export default async function ProfessionalsPage() {
               />
             </div>
 
-            <SubmitButton className="btn btn-primary">
-              <Icon name="plus" className="size-4" />
-              Agregar
-            </SubmitButton>
+            <div>
+              <label className="field-label" htmlFor="new-email">
+                Email de contacto
+              </label>
+              <input
+                id="new-email"
+                name="email"
+                type="email"
+                className="input"
+                placeholder="bianca@ejemplo.com"
+                required
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                Ahí le llega cada turno que le sacan y cada cancelación.
+              </p>
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="new-username">
+                Usuario para entrar
+              </label>
+              <input
+                id="new-username"
+                name="username"
+                className="input"
+                placeholder="bianca"
+                required
+                pattern="[A-Za-z0-9._-]{3,30}"
+                maxLength={30}
+                autoComplete="off"
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                Sin espacios ni acentos. Se puede cambiar después.
+              </p>
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="new-password">
+                Contraseña
+              </label>
+              <input
+                id="new-password"
+                name="password"
+                type="text"
+                className="input"
+                placeholder="Dejalo vacío y se genera una"
+                autoComplete="off"
+                minLength={8}
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                Mínimo 8 caracteres. Se muestra una sola vez al crearla.
+              </p>
+            </div>
+
+            <div className="flex items-end pb-1">
+              <SubmitButton className="btn btn-primary">
+                <Icon name="plus" className="size-4" />
+                Agregar y crear su cuenta
+              </SubmitButton>
+            </div>
           </div>
 
-          <p className="mt-2 text-xs text-ink-muted">
+          <p className="mt-3 text-xs text-ink-muted">
             Después cargale al menos un servicio y sus horarios para que se le
-            puedan sacar turnos.
+            puedan sacar turnos. Ella misma puede editar su foto y su
+            presentación desde Mi perfil.
           </p>
         </ActionForm>
       </section>

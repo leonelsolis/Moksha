@@ -139,6 +139,90 @@ function refresh() {
   revalidatePath("/admin/usuarios");
 }
 
+/* ── Alta de una profesional con su cuenta ──────────────────────────── */
+
+/**
+ * Suma a alguien al equipo: crea la ficha pública y la cuenta del panel de una
+ * sola vez.
+ *
+ * Es la puerta de entrada normal, la de "Agregar una profesional". Antes eran
+ * dos pantallas y el paso de la cuenta se olvidaba, dejando a la profesional
+ * sin poder entrar y —peor— sin recibir los avisos de sus turnos, porque el
+ * destinatario de esos mails es justamente el email de la cuenta.
+ *
+ * Todo se valida ANTES de tocar la base. Si algo falla a mitad de camino no
+ * queda una ficha suelta sin cuenta, que es el estado que este formulario
+ * viene a evitar.
+ */
+export async function createProfessionalWithAccount(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const name = String(formData.get("name") ?? "").trim();
+  const specialty = String(formData.get("specialty") ?? "").trim();
+  const username = readUsername(formData.get("username"));
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
+  const typed = String(formData.get("password") ?? "");
+
+  if (!name) return error("Poné el nombre de la profesional.");
+  if (name.length > 60) return error("El nombre es demasiado largo.");
+  if (!USERNAME_PATTERN.test(username)) return error(USERNAME_ERROR);
+  if (!isValidEmail(email)) {
+    return error("Escribí un email de contacto válido: ahí le llegan sus turnos.");
+  }
+  if (typed && typed.length < MIN_PASSWORD) {
+    return error(`La contraseña debe tener al menos ${MIN_PASSWORD} caracteres.`);
+  }
+
+  const [taken] = await db
+    .select({ id: adminUsers.id })
+    .from(adminUsers)
+    .where(eq(adminUsers.username, username))
+    .limit(1);
+
+  if (taken) return error("Ya existe una cuenta con ese usuario. Elegí otro.");
+
+  // Va al final del listado público, para no reordenar lo que ya estaba.
+  const existing = await db.select({ id: professionals.id }).from(professionals);
+
+  const [profesional] = await db
+    .insert(professionals)
+    .values({
+      name,
+      specialty,
+      bio: "",
+      sortOrder: existing.length + 1,
+      active: true,
+    })
+    .returning();
+
+  const password = typed || randomPassword();
+
+  await db.insert(adminUsers).values({
+    username,
+    passwordHash: await hashPassword(password),
+    displayName: name,
+    email,
+    role: "profesional",
+    professionalId: profesional.id,
+    active: true,
+  });
+
+  refresh();
+  revalidatePath("/");
+  revalidatePath("/admin/profesionales");
+
+  const clave = typed
+    ? "Ya puede entrar con la contraseña que le pusiste."
+    : `Contraseña temporal: ${password} — anotala ahora, no se vuelve a mostrar.`;
+
+  return ok(
+    `${name} agregada. Entra a mokshaturnos.com/admin con el usuario ${username}. ${clave} Cargale al menos un servicio y sus horarios para que se le puedan sacar turnos.`,
+  );
+}
+
 /* ── Alta ───────────────────────────────────────────────────────────── */
 
 export async function createUser(
