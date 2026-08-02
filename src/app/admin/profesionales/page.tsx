@@ -54,6 +54,10 @@ export default async function ProfessionalsPage() {
           <Link href="/admin/horarios" className="underline underline-offset-4">
             Horarios
           </Link>
+          , y la explicación y la foto de cada servicio en{" "}
+          <Link href="/admin/servicios" className="underline underline-offset-4">
+            Servicios
+          </Link>
           .
         </p>
       </div>

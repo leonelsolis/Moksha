@@ -170,12 +170,16 @@ async function main() {
       name: "Esmaltado semipermanente",
       durationMinutes: 60,
       sortOrder: 1,
+      description:
+        "Esmaltado que se cura con lámpara y dura unas tres semanas sin saltarse ni perder brillo. Incluye el retiro del esmaltado anterior.",
     },
     {
       professionalId: first.id,
       name: "Kapping",
       durationMinutes: 90,
       sortOrder: 2,
+      description:
+        "Refuerzo de la uña natural con gel. No alarga: cubre la uña propia para que no se quiebre y quede pareja. Dura entre tres y cuatro semanas.",
     },
     {
       professionalId: second.id,

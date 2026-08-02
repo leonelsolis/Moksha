@@ -173,6 +173,25 @@ const MIGRATIONS: string[][] = [
     `UPDATE admin_users SET role = 'admin' WHERE role = 'owner'`,
     `UPDATE admin_users SET role = 'profesional' WHERE role NOT IN ('admin', 'profesional')`,
   ],
+
+  // ── v4 · qué es cada servicio ───────────────────────────────────────────
+  [
+    /**
+     * La ficha que explica el servicio en la web pública.
+     *
+     * `description` es el texto ("qué es un kapping"), `photo_url` una imagen
+     * de ejemplo y `show_photo` el interruptor que decide si esa imagen se
+     * muestra. Son tres columnas y no dos porque el texto y la foto se
+     * encienden por separado: se puede querer explicar el servicio sin foto,
+     * y se puede querer guardar una foto sin publicarla todavía.
+     *
+     * `show_photo` arranca apagado: una base existente no empieza a mostrar
+     * recuadros que nadie configuró.
+     */
+    `ALTER TABLE services ADD COLUMN description TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE services ADD COLUMN photo_url TEXT`,
+    `ALTER TABLE services ADD COLUMN show_photo INTEGER NOT NULL DEFAULT 0`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

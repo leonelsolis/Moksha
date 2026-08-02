@@ -23,15 +23,25 @@ export type AdminNavItem = {
   label: string;
   icon: IconName;
   adminOnly: boolean;
+  /** Al revés que `adminOnly`: la ficha propia solo la tiene una profesional. */
+  professionalOnly?: boolean;
 };
 
 const NAV: AdminNavItem[] = [
   { href: "/admin", label: "Turnos", icon: "list", adminOnly: false },
   { href: "/admin/horarios", label: "Horarios", icon: "calendar", adminOnly: false },
+  { href: "/admin/servicios", label: "Servicios", icon: "tag", adminOnly: false },
+  {
+    href: "/admin/perfil",
+    label: "Mi perfil",
+    icon: "user",
+    adminOnly: false,
+    professionalOnly: true,
+  },
   { href: "/admin/profesionales", label: "Profesionales", icon: "users", adminOnly: true },
   { href: "/admin/usuarios", label: "Usuarios", icon: "key", adminOnly: true },
   { href: "/admin/ajustes", label: "Ajustes", icon: "settings", adminOnly: true },
-  { href: "/admin/cuenta", label: "Mi cuenta", icon: "user", adminOnly: false },
+  { href: "/admin/cuenta", label: "Mi cuenta", icon: "lock", adminOnly: false },
 ];
 
 export default async function AdminLayout({
@@ -45,7 +55,11 @@ export default async function AdminLayout({
   if (!account) return <>{children}</>;
 
   const settings = await getSettings();
-  const items = NAV.filter((item) => !item.adminOnly || account.role === "admin");
+  const isAdmin = account.role === "admin";
+
+  const items = NAV.filter(
+    (item) => (!item.adminOnly || isAdmin) && (!item.professionalOnly || !isAdmin),
+  );
 
   return (
     <div className="flex min-h-full flex-col">

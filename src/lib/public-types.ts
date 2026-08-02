@@ -11,7 +11,19 @@ export type PublicService = {
   name: string;
   durationMinutes: number;
   price: number | null;
+  /** Qué es el servicio. Vacío = no se muestra ninguna explicación. */
+  description: string;
+  /**
+   * Foto de ejemplo, ya filtrada por el interruptor del panel: si está
+   * apagado llega en `null` y la URL ni siquiera viaja al navegador.
+   */
+  photoUrl: string | null;
 };
+
+/** ¿Hay algo que mostrar en la ficha del servicio? */
+export function hasServiceInfo(service: PublicService) {
+  return service.description.length > 0 || service.photoUrl !== null;
+}
 
 export type PublicProfessionalView = {
   id: number;

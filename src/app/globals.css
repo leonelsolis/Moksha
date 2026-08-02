@@ -220,6 +220,47 @@
     text-transform: uppercase;
     color: var(--color-ink-muted);
   }
+
+  /* ── Animaciones ────────────────────────────────────────────────────── */
+
+  /*
+   * Entrada de la ficha del servicio.
+   *
+   * Sube unos píxeles mientras aparece: alcanza para que el ojo la registre
+   * como algo nuevo sin desplazar nada de lo que ya estaba en pantalla. Es la
+   * única animación del sitio, así que se mantiene corta y discreta a
+   * propósito.
+   */
+  .animate-card-in {
+    animation: card-in 260ms cubic-bezier(0.22, 0.68, 0.35, 1) both;
+  }
+
+  /* La foto entra un poco después y con un acercamiento mínimo. */
+  .animate-photo-in {
+    animation: photo-in 420ms cubic-bezier(0.22, 0.68, 0.35, 1) both;
+  }
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes photo-in {
+  from {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* Respeta a quien pidió menos animación en su sistema. */

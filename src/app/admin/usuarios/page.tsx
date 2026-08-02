@@ -430,16 +430,40 @@ export default async function UsersPage() {
               <label className="field-label" htmlFor="new-prof">
                 Profesional vinculada
               </label>
-              <select id="new-prof" name="professionalId" className="input" defaultValue="">
-                <option value="">— ninguna —</option>
+              <select
+                id="new-prof"
+                name="professionalId"
+                className="input"
+                defaultValue="nueva"
+              >
+                <option value="nueva">— crear su ficha ahora —</option>
                 {staff.map((person) => (
                   <option key={person.id} value={person.id}>
-                    {person.name}
+                    vincular a {person.name}
                   </option>
                 ))}
+                <option value="">— ninguna —</option>
               </select>
               <p className="mt-1 text-xs text-ink-muted">
-                Obligatoria si el rol es Profesional.
+                Obligatoria si el rol es Profesional. Con &ldquo;crear su ficha
+                ahora&rdquo; se da de alta la profesional junto con la cuenta.
+              </p>
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="new-specialty">
+                Qué hace
+              </label>
+              <input
+                id="new-specialty"
+                name="specialty"
+                className="input"
+                placeholder="Uñas"
+                maxLength={60}
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                Solo se usa al crear la ficha. Después lo edita ella misma desde
+                Mi perfil.
               </p>
             </div>
           </div>

@@ -4,7 +4,7 @@ import { BookingFlow } from "@/components/public/BookingFlow";
 import { SiteFooter, SiteHeader } from "@/components/public/SiteChrome";
 import { bookingWindow, getPublicProfessionals } from "@/lib/availability";
 import { nowInTz } from "@/lib/dates";
-import type { PublicProfessionalView } from "@/lib/public-types";
+import { hasServiceInfo, type PublicProfessionalView } from "@/lib/public-types";
 import { getSettings, settingInt } from "@/lib/settings";
 
 /**
@@ -35,18 +35,38 @@ export default async function HomePage() {
       name: service.name,
       durationMinutes: service.durationMinutes,
       price: service.price,
+      description: service.description,
+      // El interruptor del panel se resuelve acá: con la foto desactivada, su
+      // dirección ni siquiera llega al navegador.
+      photoUrl: service.showPhoto ? service.photoUrl : null,
     })),
   }));
 
   const everyoneOnVacation =
     views.length > 0 && views.every((item) => item.onVacation);
 
+  /*
+   * La página se ensancha solo si hay fichas de servicio que mostrar, porque
+   * esa es la única razón para reservar la columna del costado. Sin ninguna
+   * cargada, queda en la columna única de siempre.
+   */
+  const wide = views.some((item) => item.services.some(hasServiceInfo));
+
   return (
     <>
       <SiteHeader settings={settings} />
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:py-10">
-        <div className="mb-6 sm:mb-8">
+      {/*
+        67rem = las 48 de la columna del flujo (max-w-3xl) + 1 de separación +
+        las 18 de la ficha del costado. Con esa medida exacta, el flujo
+        conserva su ancho de siempre y el texto de arriba sigue alineado con él.
+      */}
+      <main
+        className={`mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:py-10 ${
+          wide ? "xl:max-w-[67rem]" : ""
+        }`}
+      >
+        <div className="mb-6 sm:mb-8 xl:max-w-3xl">
           <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
             {settings.business_tagline}
           </h1>
@@ -85,7 +105,7 @@ export default async function HomePage() {
           />
         )}
 
-        <div className="mt-8 border-t border-line pt-5">
+        <div className="mt-8 border-t border-line pt-5 xl:max-w-3xl">
           <p className="text-sm text-ink-soft">
             ¿Ya tenés un turno?{" "}
             <Link

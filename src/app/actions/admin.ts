@@ -23,7 +23,11 @@ import { isValidDateString, parseMinute } from "@/lib/dates";
 import { sendTestEmail } from "@/lib/email";
 import { notifyProfessionalCancellation } from "@/lib/notify";
 import { updateSettings, type SettingKey, type Settings } from "@/lib/settings";
-import { isValidEmail, normalizeEmail } from "@/lib/validation";
+import {
+  isValidEmail,
+  normalizeEmail,
+  SERVICE_DESCRIPTION_MAX,
+} from "@/lib/validation";
 
 /**
  * Acciones del panel.
@@ -64,6 +68,7 @@ function refreshAll() {
   revalidatePath("/admin");
   revalidatePath("/admin/horarios");
   revalidatePath("/admin/profesionales");
+  revalidatePath("/admin/servicios");
 }
 
 /* ── Turnos ─────────────────────────────────────────────────────────── */
@@ -336,6 +341,46 @@ export async function deleteService(
 
   refreshAll();
   return ok("Servicio eliminado.");
+}
+
+/**
+ * La ficha del servicio: qué es y si su foto se muestra.
+ *
+ * Es lo único de un servicio que NO exige ser administración. La duración, el
+ * precio o el nombre definen el negocio y los fija la dueña; la explicación de
+ * qué es un kapping la escribe quien lo hace.
+ *
+ * El aislamiento no se comprueba leyendo la fila antes: la condición de alcance
+ * va en el WHERE, así el id de un servicio ajeno no afecta ninguna fila y la
+ * acción responde que no existe. Para la administración el alcance queda vacío
+ * y puede editar cualquiera.
+ */
+export async function saveServiceInfo(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const id = Number(formData.get("id"));
+  if (!id) return error("Servicio no encontrado.");
+
+  const description = String(formData.get("description") ?? "")
+    .trim()
+    .slice(0, SERVICE_DESCRIPTION_MAX);
+
+  // Sin foto cargada el check va deshabilitado y no se envía, así que esto
+  // también lo deja apagado, que es lo correcto.
+  const showPhoto = formData.get("showPhoto") === "on";
+
+  const result = await db
+    .update(services)
+    .set({ description, showPhoto })
+    .where(withScope(user, services.professionalId, eq(services.id, id)));
+
+  if (result.rowsAffected === 0) return error("Servicio no encontrado.");
+
+  refreshAll();
+  return ok("Ficha guardada.");
 }
 
 /* ── Horarios ───────────────────────────────────────────────────────── */

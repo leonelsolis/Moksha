@@ -61,16 +61,46 @@ function readRole(value: FormDataEntryValue | null): Role | null {
 }
 
 /**
+ * Valor del selector que pide crear la profesional junto con la cuenta, en vez
+ * de elegir una de las que ya están.
+ */
+const NUEVA = "nueva";
+
+/**
  * Valida el par rol + profesional.
  *
  * Un usuario 'profesional' sin vincular no vería ningún turno, y uno 'admin'
  * con profesional vinculada sería una contradicción: el admin ve a todas.
+ *
+ * `nueva` da de alta la ficha en el momento. Es para el caso normal: sumar a
+ * alguien al equipo es crear su ficha y su cuenta a la vez, y hacerlo en dos
+ * pantallas distintas se presta a dejar la cuenta sin vincular. Solo se acepta
+ * al crear (`nueva` en una edición apuntaría a duplicar fichas sin querer).
  */
 async function resolveLink(
   role: Role,
   rawProfessionalId: FormDataEntryValue | null,
+  nuevaFicha?: { name: string; specialty: string },
 ): Promise<{ professionalId: number | null } | { message: string }> {
   if (role === "admin") return { professionalId: null };
+
+  if (nuevaFicha && String(rawProfessionalId ?? "") === NUEVA) {
+    // Va al final del listado público, para no reordenar lo que ya estaba.
+    const existing = await db.select({ id: professionals.id }).from(professionals);
+
+    const [created] = await db
+      .insert(professionals)
+      .values({
+        name: nuevaFicha.name,
+        specialty: nuevaFicha.specialty,
+        bio: "",
+        sortOrder: existing.length + 1,
+        active: true,
+      })
+      .returning();
+
+    return { professionalId: created.id };
+  }
 
   const professionalId = Number(rawProfessionalId) || 0;
   if (!professionalId) {
@@ -137,9 +167,9 @@ export async function createUser(
     return error(`La contraseña debe tener al menos ${MIN_PASSWORD} caracteres.`);
   }
 
-  const link = await resolveLink(role, formData.get("professionalId"));
-  if ("message" in link) return error(link.message);
-
+  // El usuario libre se comprueba ANTES de resolver el vínculo: si no, pedir
+  // una ficha nueva la crearía y recién después fallaría por el nombre
+  // repetido, dejando una profesional suelta que nadie pidió.
   const [taken] = await db
     .select({ id: adminUsers.id })
     .from(adminUsers)
@@ -147,6 +177,13 @@ export async function createUser(
     .limit(1);
 
   if (taken) return error("Ya existe una cuenta con ese usuario.");
+
+  const link = await resolveLink(role, formData.get("professionalId"), {
+    name: displayName,
+    specialty: String(formData.get("specialty") ?? "").trim(),
+  });
+
+  if ("message" in link) return error(link.message);
 
   const password = typed || randomPassword();
 
@@ -161,11 +198,18 @@ export async function createUser(
   });
 
   refresh();
+  revalidatePath("/");
+  revalidatePath("/admin/profesionales");
+
+  const ficha =
+    String(formData.get("professionalId") ?? "") === NUEVA
+      ? ` Además se creó su ficha: cargale los horarios y al menos un servicio para que se le puedan sacar turnos.`
+      : "";
 
   return ok(
-    typed
+    (typed
       ? `Cuenta creada para ${displayName}. Ya puede entrar con el usuario ${username}.`
-      : `Cuenta creada para ${displayName}. Usuario: ${username} · Contraseña temporal: ${password} — anotala ahora, no se vuelve a mostrar.`,
+      : `Cuenta creada para ${displayName}. Usuario: ${username} · Contraseña temporal: ${password} — anotala ahora, no se vuelve a mostrar.`) + ficha,
   );
 }
 

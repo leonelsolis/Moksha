@@ -51,6 +51,17 @@ export const services = sqliteTable(
     price: real("price"),
     active: integer("active", { mode: "boolean" }).notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
+    /**
+     * Qué es el servicio, en las palabras del negocio. Se muestra en una ficha
+     * al costado del flujo de reserva cuando el cliente lo elige.
+     */
+    description: text("description").notNull().default(""),
+    photoUrl: text("photo_url"),
+    /**
+     * El interruptor de la foto, aparte de la foto misma: sin él, la única
+     * manera de dejar de mostrarla sería borrarla y volver a subirla.
+     */
+    showPhoto: integer("show_photo", { mode: "boolean" }).notNull().default(false),
   },
   (t) => [index("services_professional_idx").on(t.professionalId)],
 );

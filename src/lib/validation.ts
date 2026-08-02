@@ -11,6 +11,15 @@
 
 export type FieldErrors = Record<string, string>;
 
+/**
+ * Tope de la explicación de un servicio.
+ *
+ * Es una definición corta al costado del flujo de reserva, no una descripción
+ * de catálogo: pasado ese largo deja de leerse y empieza a empujar el resto de
+ * la página. El mismo número limita el campo del panel y lo que se guarda.
+ */
+export const SERVICE_DESCRIPTION_MAX = 400;
+
 export type CustomerInput = {
   firstName: string;
   lastName: string;
