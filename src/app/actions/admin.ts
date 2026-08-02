@@ -482,7 +482,8 @@ export async function deleteOverride(
 const EDITABLE_SETTINGS: SettingKey[] = [
   "business_name",
   "business_tagline",
-  "business_logo_url",
+  // El logo no está acá: se sube como imagen desde su propia sección
+  // (ver actions/photos.ts), no se escribe a mano.
   "contact_phone",
   "contact_address",
   "contact_instagram",

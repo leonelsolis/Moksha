@@ -9,9 +9,13 @@ import {
   toggleProfessionalActive,
   toggleVacation,
 } from "@/app/actions/admin";
+import {
+  removeProfessionalPhoto,
+  uploadProfessionalPhoto,
+} from "@/app/actions/photos";
 import { Icon } from "@/components/Icon";
 import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
-import { PhotoUpload } from "@/components/admin/PhotoUpload";
+import { ImageUpload } from "@/components/admin/ImageUpload";
 import { db } from "@/db";
 import { professionals, services, vacations } from "@/db/schema";
 import { requireOwner } from "@/lib/auth";
@@ -142,10 +146,16 @@ export default async function ProfessionalsPage() {
               {/* Va fuera del formulario de datos: la foto se sube y se quita
                   por su cuenta, sin tocar el resto de la ficha. */}
               <div className="border-b border-line px-4 pb-4">
-                <PhotoUpload
-                  professionalId={person.id}
-                  photoUrl={person.photoUrl}
-                  name={person.name}
+                <ImageUpload
+                  id={`profesional-${person.id}`}
+                  label="Foto"
+                  noun="foto"
+                  hint="Se achica sola, no importa el tamaño. Sale mejor si es cuadrada."
+                  imageUrl={person.photoUrl}
+                  alt={`Foto de ${person.name}`}
+                  upload={uploadProfessionalPhoto}
+                  remove={removeProfessionalPhoto}
+                  hidden={{ professionalId: person.id }}
                 />
               </div>
 

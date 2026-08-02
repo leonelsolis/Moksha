@@ -2,22 +2,18 @@
 
 import { useActionState, useEffect, useRef, useState } from "react";
 
-import {
-  removeProfessionalPhoto,
-  uploadProfessionalPhoto,
-} from "@/app/actions/photos";
 import { Alert } from "@/components/Alert";
 import { Icon } from "@/components/Icon";
-import { emptyActionState } from "@/lib/action-state";
+import { emptyActionState, type ActionState } from "@/lib/action-state";
 
 /**
- * Subida de la foto de una profesional.
+ * Subida de una imagen desde el panel: la foto de una profesional o el logo.
  *
  * La imagen se achica en el navegador antes de enviarla. Una foto sacada con
  * el celular pesa varios megas y tiene 4000 píxeles de ancho; en la web se
  * muestra a unos 300, así que mandarla entera sería gastar los datos del
- * celular de la dueña y hacer lenta la página pública. Reducida a 800px y
- * recomprimida queda en unos 150 KB sin diferencia visible.
+ * celular de la dueña y hacer lenta la página pública. Reducida y recomprimida
+ * queda en unos 150 KB sin diferencia visible.
  *
  * De paso resuelve otra cosa: los envíos al servidor tienen un tope de tamaño
  * que una foto sin procesar superaría.
@@ -28,21 +24,43 @@ import { emptyActionState } from "@/lib/action-state";
  * curso y que el botón muestre "Subiendo…".
  */
 
-const MAX_SIDE = 800;
 const JPEG_QUALITY = 0.85;
 
+type Accion = (prev: ActionState, formData: FormData) => Promise<ActionState>;
+
 type Props = {
-  professionalId: number;
-  photoUrl: string | null;
-  name: string;
+  /** Identifica el campo dentro de la página; puede haber varios a la vez. */
+  id: string;
+  label: string;
+  hint: string;
+  imageUrl: string | null;
+  alt: string;
+  upload: Accion;
+  remove: Accion;
+  /** Campos que la acción necesita para saber qué está actualizando. */
+  hidden?: Record<string, string | number>;
+  /** Lado máximo de la imagen guardada, en píxeles. */
+  maxSide?: number;
+  /**
+   * Un logo suele tener fondo transparente, y JPEG no lo soporta: quedaría con
+   * un rectángulo negro detrás. Con `keepAlpha` se guarda en PNG.
+   */
+  keepAlpha?: boolean;
+  /** El recuadro de vista previa: cuadrado para las caras, ancho para el logo. */
+  previewClassName?: string;
+  imageClassName?: string;
+  /** Cómo se llama la imagen en los botones: "Subir foto", "Subir logo". */
+  noun?: string;
+  /** Ícono del recuadro vacío. */
+  emptyIcon?: "user" | "image";
 };
 
-async function shrinkImage(file: File): Promise<File> {
+async function shrinkImage(file: File, maxSide: number, keepAlpha: boolean) {
   // `imageOrientation` respeta el dato de rotación que guardan los celulares;
   // sin esto, las fotos verticales aparecen acostadas.
   const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
 
-  const escala = Math.min(1, MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const escala = Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height));
   const ancho = Math.round(bitmap.width * escala);
   const alto = Math.round(bitmap.height * escala);
 
@@ -56,24 +74,35 @@ async function shrinkImage(file: File): Promise<File> {
   ctx.drawImage(bitmap, 0, 0, ancho, alto);
   bitmap.close();
 
+  const tipo = keepAlpha ? "image/png" : "image/jpeg";
+
   const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob(resolve, "image/jpeg", JPEG_QUALITY),
+    canvas.toBlob(resolve, tipo, JPEG_QUALITY),
   );
 
   if (!blob) return file;
 
-  return new File([blob], "foto.jpg", { type: "image/jpeg" });
+  return new File([blob], keepAlpha ? "imagen.png" : "imagen.jpg", { type: tipo });
 }
 
-export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
-  const [state, subir, subiendo] = useActionState(
-    uploadProfessionalPhoto,
-    emptyActionState,
-  );
-  const [quitarState, quitar, quitando] = useActionState(
-    removeProfessionalPhoto,
-    emptyActionState,
-  );
+export function ImageUpload({
+  id,
+  label,
+  hint,
+  imageUrl,
+  alt,
+  upload,
+  remove,
+  hidden = {},
+  maxSide = 800,
+  keepAlpha = false,
+  previewClassName = "size-20",
+  imageClassName = "object-cover",
+  noun = "imagen",
+  emptyIcon = "user",
+}: Props) {
+  const [state, subir, subiendo] = useActionState(upload, emptyActionState);
+  const [quitarState, quitar, quitando] = useActionState(remove, emptyActionState);
 
   const formRef = useRef<HTMLFormElement>(null);
   const [preparando, setPreparando] = useState(false);
@@ -87,10 +116,12 @@ export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
     };
   }, [previa]);
 
-  // Cuando el servidor confirma, la foto de verdad reemplaza a la previa.
+  // Cuando el servidor confirma, la imagen de verdad reemplaza a la previa.
   useEffect(() => {
     if (state.ok) setPrevia(null);
   }, [state.ok]);
+
+  const campos = Object.entries(hidden);
 
   async function alElegir(event: React.ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
@@ -108,7 +139,7 @@ export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
     setPreparando(true);
 
     try {
-      const reducida = await shrinkImage(file);
+      const reducida = await shrinkImage(file, maxSide, keepAlpha);
 
       // Se reemplaza el archivo elegido por la versión achicada, así el
       // formulario envía esa y no la original.
@@ -130,7 +161,7 @@ export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
     }
   }
 
-  const mostrada = previa ?? photoUrl;
+  const mostrada = previa ?? imageUrl;
   const ocupado = preparando || subiendo || quitando;
 
   const mensaje = errorLocal
@@ -149,11 +180,11 @@ export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
 
   return (
     <div className="space-y-2.5">
-      <span className="field-label">Foto</span>
+      <span className="field-label">{label}</span>
 
       <div className="flex items-start gap-3">
         <div
-          className={`size-20 shrink-0 overflow-hidden rounded-sm border border-line bg-surface-sunken ${
+          className={`shrink-0 overflow-hidden rounded-sm border border-line bg-surface-sunken ${previewClassName} ${
             ocupado ? "opacity-50" : ""
           }`}
         >
@@ -163,12 +194,12 @@ export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={mostrada}
-              alt={`Foto de ${name}`}
-              className="size-full object-cover"
+              alt={alt}
+              className={`size-full ${imageClassName}`}
             />
           ) : (
             <div className="flex size-full items-center justify-center">
-              <Icon name="user" className="size-7 text-line-strong" />
+              <Icon name={emptyIcon} className="size-7 text-line-strong" />
             </div>
           )}
         </div>
@@ -176,10 +207,12 @@ export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap gap-1.5">
             <form ref={formRef} action={subir}>
-              <input type="hidden" name="professionalId" value={professionalId} />
+              {campos.map(([name, value]) => (
+                <input key={name} type="hidden" name={name} value={value} />
+              ))}
               {/*
                 No lleva `disabled`: un campo deshabilitado queda fuera del
-                envío del formulario, así que la foto nunca llegaría al
+                envío del formulario, así que la imagen nunca llegaría al
                 servidor. Mientras hay una subida en curso, el que bloquea el
                 acceso es la etiqueta de abajo.
               */}
@@ -189,11 +222,11 @@ export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
                 accept="image/jpeg,image/png,image/webp"
                 onChange={alElegir}
                 className="sr-only"
-                id={`foto-${professionalId}`}
+                id={`imagen-${id}`}
               />
 
               <label
-                htmlFor={`foto-${professionalId}`}
+                htmlFor={`imagen-${id}`}
                 className={`btn btn-secondary btn-sm ${
                   ocupado ? "pointer-events-none opacity-55" : ""
                 }`}
@@ -203,14 +236,16 @@ export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
                   : subiendo
                     ? "Subiendo…"
                     : mostrada
-                      ? "Cambiar foto"
-                      : "Subir foto"}
+                      ? `Cambiar ${noun}`
+                      : `Subir ${noun}`}
               </label>
             </form>
 
-            {photoUrl && !ocupado ? (
+            {imageUrl && !ocupado ? (
               <form action={quitar}>
-                <input type="hidden" name="professionalId" value={professionalId} />
+                {campos.map(([name, value]) => (
+                  <input key={name} type="hidden" name={name} value={value} />
+                ))}
                 <button type="submit" className="btn btn-ghost btn-sm">
                   Quitar
                 </button>
@@ -218,9 +253,7 @@ export function PhotoUpload({ professionalId, photoUrl, name }: Props) {
             ) : null}
           </div>
 
-          <p className="mt-1.5 text-xs text-ink-muted">
-            Se achica sola, no importa el tamaño. Sale mejor si es cuadrada.
-          </p>
+          <p className="mt-1.5 text-xs text-ink-muted">{hint}</p>
         </div>
       </div>
 

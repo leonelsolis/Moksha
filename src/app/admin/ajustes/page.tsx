@@ -1,5 +1,7 @@
 import { saveSettings } from "@/app/actions/admin";
+import { removeLogo, uploadLogo } from "@/app/actions/photos";
 import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
+import { ImageUpload } from "@/components/admin/ImageUpload";
 import { PasswordForm } from "@/components/admin/PasswordForm";
 import { requireOwner } from "@/lib/auth";
 import { getSettings, settingBool } from "@/lib/settings";
@@ -29,6 +31,35 @@ export default async function SettingsPage() {
           Datos del negocio y reglas de reserva y cancelación.
         </p>
       </div>
+
+      {/* Va afuera del formulario de ajustes: el logo se sube y se quita por su
+          cuenta, y un formulario no puede contener a otro. */}
+      <section className="panel overflow-hidden">
+        <div className="border-b border-line px-4 py-3">
+          <h2 className="text-sm font-medium">Logo</h2>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            Se muestra en el encabezado de la web pública.
+          </p>
+        </div>
+
+        <div className="p-4">
+          <ImageUpload
+            id="logo"
+            label="Imagen del logo"
+            noun="logo"
+            emptyIcon="image"
+            hint="Sin logo se muestra el nombre en texto. Si el archivo es PNG con fondo transparente, se conserva."
+            imageUrl={settings.business_logo_url || null}
+            alt={settings.business_name}
+            upload={uploadLogo}
+            remove={removeLogo}
+            maxSide={400}
+            keepAlpha
+            previewClassName="h-20 w-32"
+            imageClassName="object-contain p-1.5"
+          />
+        </div>
+      </section>
 
       <ActionForm action={saveSettings} className="space-y-5" feedback="top">
         {/* ── Negocio ───────────────────────────────────────────────── */}
@@ -65,20 +96,6 @@ export default async function SettingsPage() {
                 className="input"
                 defaultValue={settings.business_tagline}
                 maxLength={120}
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="field-label" htmlFor="business_logo_url">
-                Link del logo
-              </label>
-              <input
-                id="business_logo_url"
-                name="business_logo_url"
-                type="url"
-                className="input"
-                defaultValue={settings.business_logo_url}
-                placeholder="Vacío = se muestra el nombre en texto"
               />
             </div>
 

@@ -125,11 +125,13 @@ Para activarlo más adelante:
 
 ---
 
-## Fotos de las profesionales
+## Fotos y logo
 
-Las fotos se suben desde el panel (Profesionales → Foto y datos → Subir foto) y
-aparecen al instante, sin volver a publicar el proyecto. Las dueñas pueden
-cambiarlas solas desde el celular.
+Las imágenes se suben desde el panel y aparecen al instante, sin volver a
+publicar el proyecto. Se pueden cambiar desde la computadora o el celular.
+
+- **Fotos de las profesionales:** Profesionales → Foto y datos → Subir foto.
+- **Logo del negocio:** Ajustes → Logo → Subir logo.
 
 No van en la carpeta `public/`: eso es parte del código, así que cada foto
 nueva obligaría a hacer un despliegue.
@@ -138,24 +140,33 @@ nueva obligaría a hacer un despliegue.
 
 1. En Vercel, entrá a tu proyecto → pestaña **Storage** → **Create** → **Blob**.
 2. Ponele un nombre (por ejemplo `moksha-fotos`) y creá el almacén.
-3. Conectalo al proyecto. Vercel agrega la variable `BLOB_READ_WRITE_TOKEN`
-   sola, no hay que copiar nada a mano.
-4. Volvé a desplegar para que la tome.
+3. **Connect to Project** → elegí el proyecto y los tres entornos (Production,
+   Preview y Development). Vercel agrega las variables solo, no hay que copiar
+   nada a mano.
+4. Volvé a desplegar para que las tome.
 
-Si querés subir fotos también desde tu computadora, traé la variable con:
+Según cuándo se haya creado el almacén, la variable que aparece es
+`BLOB_READ_WRITE_TOKEN` (los viejos) o `BLOB_STORE_ID` (los nuevos, que se
+autentican con un token temporal que Vercel renueva sola). El código acepta
+las dos formas.
+
+Si querés subir fotos también desde tu computadora, traé las variables con:
 
 ```bash
 npx vercel env pull .env.local
 ```
 
-Sin esa variable el resto del sistema funciona igual: solo el botón de subir
-foto avisa que falta configurarlo, y se muestran las iniciales de cada
-profesional.
+Sin ellas el resto del sistema funciona igual: solo el botón de subir
+avisa que falta configurarlo, se muestran las iniciales de cada profesional y
+el nombre del negocio en texto en lugar del logo.
 
 ### Qué hace con la imagen
 
-- La achica en el navegador a 800 píxeles de lado como máximo y la recomprime.
-  Una foto de celular de 4 MB queda en unos 150 KB, sin diferencia visible.
+- La achica en el navegador y la recomprime: 800 píxeles de lado como máximo
+  para las fotos, 400 para el logo. Una foto de celular de 4 MB queda en unos
+  150 KB, sin diferencia visible.
+- El logo se guarda en PNG para no perder el fondo transparente; las fotos, en
+  JPEG, que pesa menos.
 - Respeta la orientación: las fotos verticales no salen acostadas.
 - Al reemplazar una foto, borra la anterior del almacenamiento.
 - Si la foto era un link externo cargado a mano, la quita de la ficha pero no
@@ -235,7 +246,7 @@ cargá estas variables de entorno en el panel de Vercel:
 | `TURSO_DATABASE_URL` | `libsql://…` |
 | `TURSO_AUTH_TOKEN` | El token de Turso |
 | `APP_URL` | La dirección final del sitio |
-| `BLOB_READ_WRITE_TOKEN` | La agrega Vercel sola al crear el almacén de fotos |
+| `BLOB_STORE_ID` o `BLOB_READ_WRITE_TOKEN` | Las agrega Vercel sola al conectar el almacén de fotos |
 
 Vercel compila y publica solo. El HTTPS y el certificado vienen incluidos, y
 hacen falta: sin ellos no funcionan ni la cookie de sesión del panel ni el
