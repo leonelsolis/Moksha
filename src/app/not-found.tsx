@@ -19,7 +19,7 @@ export default function NotFound() {
           Sacar un turno
         </Link>
         <Link href="/cancelar" className="btn btn-secondary">
-          Buscar mi turn
+          Buscar mi turno
         </Link>
       </div>
     </main>
