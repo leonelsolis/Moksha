@@ -1,0 +1,296 @@
+import { saveSettings } from "@/app/actions/admin";
+import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
+import { PasswordForm } from "@/components/admin/PasswordForm";
+import { requireOwner } from "@/lib/auth";
+import { getSettings, settingBool } from "@/lib/settings";
+
+/**
+ * Configuración del negocio.
+ *
+ * Todo lo de esta pantalla se guarda en la base, no en el código. Es lo que
+ * permite instalar el mismo sistema en otro local: se despliega una copia
+ * limpia y se completa desde acá.
+ */
+
+export const dynamic = "force-dynamic";
+
+export const metadata = { title: "Ajustes" };
+
+export default async function SettingsPage() {
+  await requireOwner();
+
+  const settings = await getSettings();
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">Ajustes</h1>
+        <p className="mt-0.5 text-sm text-ink-soft">
+          Datos del negocio y reglas de reserva y cancelación.
+        </p>
+      </div>
+
+      <ActionForm action={saveSettings} className="space-y-5" feedback="top">
+        {/* ── Negocio ───────────────────────────────────────────────── */}
+        <section className="panel overflow-hidden">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-sm font-medium">Datos del negocio</h2>
+            <p className="mt-0.5 text-xs text-ink-soft">
+              Aparecen en el encabezado y el pie de la web pública.
+            </p>
+          </div>
+
+          <div className="grid gap-3 p-4 sm:grid-cols-2">
+            <div>
+              <label className="field-label" htmlFor="business_name">
+                Nombre
+              </label>
+              <input
+                id="business_name"
+                name="business_name"
+                className="input"
+                defaultValue={settings.business_name}
+                required
+                maxLength={60}
+              />
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="business_tagline">
+                Título de la página de reservas
+              </label>
+              <input
+                id="business_tagline"
+                name="business_tagline"
+                className="input"
+                defaultValue={settings.business_tagline}
+                maxLength={120}
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="field-label" htmlFor="business_logo_url">
+                Link del logo
+              </label>
+              <input
+                id="business_logo_url"
+                name="business_logo_url"
+                type="url"
+                className="input"
+                defaultValue={settings.business_logo_url}
+                placeholder="Vacío = se muestra el nombre en texto"
+              />
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="contact_phone">
+                Teléfono de contacto
+              </label>
+              <input
+                id="contact_phone"
+                name="contact_phone"
+                className="input"
+                defaultValue={settings.contact_phone}
+                maxLength={40}
+              />
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="contact_instagram">
+                Instagram
+              </label>
+              <input
+                id="contact_instagram"
+                name="contact_instagram"
+                className="input"
+                defaultValue={settings.contact_instagram}
+                placeholder="@usuario"
+                maxLength={60}
+              />
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="field-label" htmlFor="contact_address">
+                Dirección
+              </label>
+              <input
+                id="contact_address"
+                name="contact_address"
+                className="input"
+                defaultValue={settings.contact_address}
+                maxLength={120}
+              />
+            </div>
+          </div>
+        </section>
+
+        {/* ── Reservas ──────────────────────────────────────────────── */}
+        <section className="panel overflow-hidden">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-sm font-medium">Reglas para sacar turno</h2>
+          </div>
+
+          <div className="grid gap-3 p-4 sm:grid-cols-2">
+            <div>
+              <label className="field-label" htmlFor="booking_window_days">
+                Hasta cuántos días adelante se puede reservar
+              </label>
+              <input
+                id="booking_window_days"
+                name="booking_window_days"
+                type="number"
+                min={1}
+                max={365}
+                className="input tabular"
+                defaultValue={settings.booking_window_days}
+                required
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                El calendario no muestra fechas más lejanas que esto.
+              </p>
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="min_hours_before_booking">
+                Anticipación mínima para reservar (horas)
+              </label>
+              <input
+                id="min_hours_before_booking"
+                name="min_hours_before_booking"
+                type="number"
+                min={0}
+                max={720}
+                className="input tabular"
+                defaultValue={settings.min_hours_before_booking}
+                required
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                Con 2, nadie puede sacar un turno para dentro de una hora. Poné 0
+                para permitir hasta último momento.
+              </p>
+            </div>
+
+            <div className="sm:col-span-2">
+              <label className="field-label" htmlFor="timezone">
+                Zona horaria
+              </label>
+              <input
+                id="timezone"
+                name="timezone"
+                className="input"
+                defaultValue={settings.timezone}
+                required
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                Determina qué hora es &ldquo;ahora&rdquo; para el sistema. Salvo
+                que el local esté en otro país, dejala como está.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Cancelación ───────────────────────────────────────────── */}
+        <section className="panel overflow-hidden">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-sm font-medium">Reglas para cancelar</h2>
+          </div>
+
+          <div className="space-y-3 p-4">
+            <div className="max-w-sm">
+              <label className="field-label" htmlFor="cancel_cutoff_hours">
+                Hasta cuántas horas antes puede cancelar el cliente
+              </label>
+              <input
+                id="cancel_cutoff_hours"
+                name="cancel_cutoff_hours"
+                type="number"
+                min={0}
+                max={720}
+                className="input tabular"
+                defaultValue={settings.cancel_cutoff_hours}
+                required
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                <strong>0 = sin límite</strong>, puede cancelar hasta la hora del
+                turno. Con 24, deja de poder cancelar solo el último día y tiene
+                que llamar. Desde el panel siempre podés cancelar cualquier turno.
+              </p>
+            </div>
+
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="allow_client_lookup"
+                defaultChecked={settingBool(settings, "allow_client_lookup")}
+                className="mt-0.5 size-4 accent-[var(--color-accent)]"
+              />
+              <span>
+                Permitir buscar el turno con DNI y email
+                <span className="mt-0.5 block text-xs text-ink-muted">
+                  Es el respaldo para quien perdió el link. Si lo desactivás, solo
+                  se puede acceder al turno con el link personal.
+                </span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        {/* ── Emails ────────────────────────────────────────────────── */}
+        <section className="panel overflow-hidden">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-sm font-medium">Emails de confirmación</h2>
+            <p className="mt-0.5 text-xs text-ink-soft">
+              Desactivados hasta que haya hosting y un dominio propio. Mientras
+              tanto el cliente recibe su link en la pantalla de confirmación.
+            </p>
+          </div>
+
+          <div className="space-y-3 p-4">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="email_enabled"
+                defaultChecked={settingBool(settings, "email_enabled")}
+                className="mt-0.5 size-4 accent-[var(--color-accent)]"
+              />
+              <span>
+                Enviar emails al reservar y al cancelar
+                <span className="mt-0.5 block text-xs text-ink-muted">
+                  Requiere una cuenta de Resend con el dominio verificado y la
+                  clave <code>RESEND_API_KEY</code> cargada en el servidor. Ver el
+                  README.
+                </span>
+              </span>
+            </label>
+
+            <div className="max-w-sm">
+              <label className="field-label" htmlFor="email_from">
+                Dirección remitente
+              </label>
+              <input
+                id="email_from"
+                name="email_from"
+                type="email"
+                className="input"
+                defaultValue={settings.email_from}
+                placeholder="turnos@tudominio.com"
+              />
+            </div>
+          </div>
+        </section>
+
+        <SubmitButton className="btn btn-primary">Guardar ajustes</SubmitButton>
+      </ActionForm>
+
+      {/* ── Contraseña ─────────────────────────────────────────────── */}
+      <section className="panel overflow-hidden">
+        <div className="border-b border-line px-4 py-3">
+          <h2 className="text-sm font-medium">Tu contraseña</h2>
+        </div>
+        <div className="p-4">
+          <PasswordForm />
+        </div>
+      </section>
+    </div>
+  );
+}

@@ -1,0 +1,538 @@
+import { asc, eq, gte } from "drizzle-orm";
+
+import {
+  addVacation,
+  deleteService,
+  deleteVacation,
+  saveProfessional,
+  saveService,
+  toggleProfessionalActive,
+  toggleVacation,
+} from "@/app/actions/admin";
+import { Icon } from "@/components/Icon";
+import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
+import { db } from "@/db";
+import { professionals, services, vacations } from "@/db/schema";
+import { requireOwner } from "@/lib/auth";
+import { formatDateLong, isWithin, nowInTz } from "@/lib/dates";
+import { getSettings } from "@/lib/settings";
+
+/**
+ * Alta y edición de profesionales, sus servicios y sus vacaciones.
+ *
+ * Los servicios son los que definen cuánto dura cada turno: si una profesional
+ * tiene uno solo, la web pública lo aplica sin preguntar nada; si tiene varios,
+ * aparece un paso más donde el cliente elige.
+ */
+
+export const dynamic = "force-dynamic";
+
+export const metadata = { title: "Profesionales" };
+
+export default async function ProfessionalsPage() {
+  await requireOwner();
+
+  const settings = await getSettings();
+  const today = nowInTz(settings.timezone).date;
+
+  const [staff, allServices, allVacations] = await Promise.all([
+    db
+      .select()
+      .from(professionals)
+      .orderBy(asc(professionals.sortOrder), asc(professionals.name)),
+    db.select().from(services).orderBy(asc(services.sortOrder), asc(services.id)),
+    db
+      .select()
+      .from(vacations)
+      .where(gte(vacations.endDate, today))
+      .orderBy(asc(vacations.startDate)),
+  ]);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h1 className="text-xl font-semibold tracking-tight">Profesionales</h1>
+        <p className="mt-0.5 text-sm text-ink-soft">
+          Datos, servicios que ofrece cada una y períodos de vacaciones.
+        </p>
+      </div>
+
+      {staff.map((person) => {
+        const ownServices = allServices.filter((s) => s.professionalId === person.id);
+        const ownVacations = allVacations.filter(
+          (v) => v.professionalId === person.id,
+        );
+        const currentVacation = ownVacations.find((v) =>
+          isWithin(today, v.startDate, v.endDate),
+        );
+        const isOnVacationNow = person.onVacation || Boolean(currentVacation);
+
+        return (
+          <section key={person.id} className="panel overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <h2 className="text-sm font-semibold">{person.name}</h2>
+
+                {person.specialty ? (
+                  <span className="text-sm text-ink-soft">{person.specialty}</span>
+                ) : null}
+
+                {isOnVacationNow ? (
+                  <span className="badge border-warning-line bg-warning-soft text-warning">
+                    <Icon name="vacation" className="size-3" />
+                    De vacaciones
+                  </span>
+                ) : null}
+
+                {!person.active ? (
+                  <span className="badge border-line-strong bg-surface-sunken text-ink-muted">
+                    <Icon name="slash" className="size-3" />
+                    No aparece en la web
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {/* Interruptor inmediato, sin fechas. */}
+                <ActionForm action={toggleVacation} feedback="none">
+                  <input type="hidden" name="id" value={person.id} />
+                  <input
+                    type="hidden"
+                    name="onVacation"
+                    value={person.onVacation ? "false" : "true"}
+                  />
+                  <SubmitButton className="btn btn-secondary btn-sm" pendingLabel="…">
+                    <Icon name="vacation" className="size-3.5" />
+                    {person.onVacation ? "Volvió de vacaciones" : "Marcar de vacaciones"}
+                  </SubmitButton>
+                </ActionForm>
+
+                <ActionForm action={toggleProfessionalActive} feedback="none">
+                  <input type="hidden" name="id" value={person.id} />
+                  <input
+                    type="hidden"
+                    name="active"
+                    value={person.active ? "false" : "true"}
+                  />
+                  <SubmitButton className="btn btn-ghost btn-sm" pendingLabel="…">
+                    {person.active ? "Ocultar de la web" : "Mostrar en la web"}
+                  </SubmitButton>
+                </ActionForm>
+              </div>
+            </div>
+
+            {person.onVacation ? (
+              <p className="border-b border-line bg-warning-soft px-4 py-2 text-xs text-warning">
+                Está marcada de vacaciones sin fecha de vuelta. No se le pueden
+                sacar turnos hasta que la desmarques.
+              </p>
+            ) : null}
+
+            {/* ── Datos ─────────────────────────────────────────────── */}
+            <details className="group border-b border-line">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm text-ink-soft hover:bg-surface-sunken">
+                Datos y foto
+                <Icon
+                  name="chevronDown"
+                  className="size-4 transition-transform group-open:rotate-180"
+                />
+              </summary>
+
+              <ActionForm action={saveProfessional} className="space-y-3 px-4 pb-4">
+                <input type="hidden" name="id" value={person.id} />
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <label className="field-label" htmlFor={`name-${person.id}`}>
+                      Nombre
+                    </label>
+                    <input
+                      id={`name-${person.id}`}
+                      name="name"
+                      className="input"
+                      defaultValue={person.name}
+                      required
+                      maxLength={60}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="field-label" htmlFor={`specialty-${person.id}`}>
+                      Qué hace
+                    </label>
+                    <input
+                      id={`specialty-${person.id}`}
+                      name="specialty"
+                      className="input"
+                      defaultValue={person.specialty}
+                      placeholder="Uñas"
+                      maxLength={60}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="field-label" htmlFor={`photo-${person.id}`}>
+                      
+                    </label>
+                    <input
+                      id={`photo-${person.id}`}
+                      name="photoUrl"
+                      type="url"
+                      className="input"
+                      defaultValue={person.photoUrl ?? ""}
+                      placeholder="https://…"
+                    />
+                    <p className="mt-1 text-xs text-ink-muted">
+                      Si la dejás vacía se muestran las iniciales. Podés subir la
+                      foto a la carpeta <code>public/</code> y poner{" "}
+                      <code>/foto.jpg</code>.
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="field-label" htmlFor={`order-${person.id}`}>
+                      Orden en la web
+                    </label>
+                    <input
+                      id={`order-${person.id}`}
+                      name="sortOrder"
+                      type="number"
+                      className="input"
+                      defaultValue={person.sortOrder}
+                    />
+                  </div>
+
+                  <div className="flex items-end pb-2">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        name="active"
+                        defaultChecked={person.active}
+                        className="size-4 accent-[var(--color-accent)]"
+                      />
+                      Aparece en la web pública
+                    </label>
+                  </div>
+                </div>
+
+                <SubmitButton className="btn btn-primary">Guardar cambios</SubmitButton>
+              </ActionForm>
+            </details>
+
+            {/* ── Servicios ─────────────────────────────────────────── */}
+            <details className="group border-b border-line" open={ownServices.length === 0}>
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm text-ink-soft hover:bg-surface-sunken">
+                <span>
+                  Servicios y duración
+                  <span className="ml-2 text-xs text-ink-muted">
+                    {ownServices.length === 0
+                      ? "sin cargar"
+                      : `${ownServices.length} cargado${ownServices.length === 1 ? "" : "s"}`}
+                  </span>
+                </span>
+                <Icon
+                  name="chevronDown"
+                  className="size-4 transition-transform group-open:rotate-180"
+                />
+              </summary>
+
+              <div className="px-4 pb-4">
+                {ownServices.length === 0 ? (
+                  <p className="mb-3 rounded-sm border border-warning-line bg-warning-soft p-2.5 text-xs text-warning">
+                    Sin servicios cargados no se le pueden sacar turnos. Cargá al
+                    menos uno con su duración.
+                  </p>
+                ) : (
+                  <ul className="mb-3 divide-y divide-line rounded-sm border border-line">
+                    {ownServices.map((service) => (
+                      <li key={service.id} className="flex flex-wrap items-center gap-3 p-2.5">
+                        <ActionForm
+                          action={saveService}
+                          className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
+                          feedback="none"
+                        >
+                          <input type="hidden" name="id" value={service.id} />
+                          <input type="hidden" name="professionalId" value={person.id} />
+
+                          <input
+                            name="name"
+                            defaultValue={service.name}
+                            className="input min-w-0 flex-1 py-1 text-sm"
+                            aria-label="Nombre del servicio"
+                            required
+                            maxLength={60}
+                          />
+
+                          <span className="flex items-center gap-1">
+                            <input
+                              name="durationMinutes"
+                              type="number"
+                              defaultValue={service.durationMinutes}
+                              min={5}
+                              max={480}
+                              step={5}
+                              className="input w-20 py-1 text-sm tabular"
+                              aria-label="Duración en minutos"
+                              required
+                            />
+                            <span className="text-xs text-ink-muted">min</span>
+                          </span>
+
+                          <span className="flex items-center gap-1">
+                            <span className="text-xs text-ink-muted">$</span>
+                            <input
+                              name="price"
+                              type="number"
+                              defaultValue={service.price ?? ""}
+                              min={0}
+                              step="0.01"
+                              className="input w-24 py-1 text-sm tabular"
+                              aria-label="Precio (opcional)"
+                              placeholder="—"
+                            />
+                          </span>
+
+                          <label className="flex items-center gap-1.5 text-xs">
+                            <input
+                              type="checkbox"
+                              name="active"
+                              defaultChecked={service.active}
+                              className="size-3.5 accent-[var(--color-accent)]"
+                            />
+                            Activo
+                          </label>
+
+                          <SubmitButton className="btn btn-secondary btn-sm" pendingLabel="…">
+                            Guardar
+                          </SubmitButton>
+                        </ActionForm>
+
+                        <ActionForm action={deleteService} feedback="none">
+                          <input type="hidden" name="id" value={service.id} />
+                          <SubmitButton className="btn btn-ghost btn-sm" pendingLabel="…">
+                            <Icon name="trash" className="size-3.5" />
+                            <span className="sr-only">Eliminar {service.name}</span>
+                          </SubmitButton>
+                        </ActionForm>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <ActionForm action={saveService} resetOnSuccess>
+                  <input type="hidden" name="professionalId" value={person.id} />
+                  <input type="hidden" name="active" value="on" />
+
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="min-w-40 flex-1">
+                      <label className="field-label" htmlFor={`new-service-${person.id}`}>
+                        Servicio nuevo
+                      </label>
+                      <input
+                        id={`new-service-${person.id}`}
+                        name="name"
+                        className="input"
+                        placeholder="Esmaltado semipermanente"
+                        required
+                        maxLength={60}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="field-label" htmlFor={`new-duration-${person.id}`}>
+                        Duración
+                      </label>
+                      <input
+                        id={`new-duration-${person.id}`}
+                        name="durationMinutes"
+                        type="number"
+                        className="input w-28 tabular"
+                        defaultValue={60}
+                        min={5}
+                        max={480}
+                        step={5}
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="field-label" htmlFor={`new-price-${person.id}`}>
+                        Precio
+                      </label>
+                      <input
+                        id={`new-price-${person.id}`}
+                        name="price"
+                        type="number"
+                        className="input w-28 tabular"
+                        min={0}
+                        step="0.01"
+                        placeholder="Opcional"
+                      />
+                    </div>
+
+                    <SubmitButton className="btn btn-secondary">
+                      <Icon name="plus" className="size-3.5" />
+                      Agregar
+                    </SubmitButton>
+                  </div>
+                </ActionForm>
+              </div>
+            </details>
+
+            {/* ── Vacaciones ────────────────────────────────────────── */}
+            <details className="group">
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm text-ink-soft hover:bg-surface-sunken">
+                <span>
+                  Vacaciones con fecha
+                  {ownVacations.length > 0 ? (
+                    <span className="ml-2 text-xs text-ink-muted">
+                      {ownVacations.length} programada
+                      {ownVacations.length === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                </span>
+                <Icon
+                  name="chevronDown"
+                  className="size-4 transition-transform group-open:rotate-180"
+                />
+              </summary>
+
+              <div className="px-4 pb-4">
+                {ownVacations.length > 0 ? (
+                  <ul className="mb-3 divide-y divide-line rounded-sm border border-line">
+                    {ownVacations.map((row) => (
+                      <li
+                        key={row.id}
+                        className="flex flex-wrap items-center justify-between gap-2 p-2.5"
+                      >
+                        <span className="text-sm">
+                          <span className="first-letter:uppercase">{formatDateLong(row.startDate)}</span>
+                          <span className="text-ink-muted"> al </span>
+                          <span>{formatDateLong(row.endDate, true)}</span>
+                          {row.note ? (
+                            <span className="ml-2 text-xs text-ink-muted">{row.note}</span>
+                          ) : null}
+                          {isWithin(today, row.startDate, row.endDate) ? (
+                            <span className="badge ml-2 border-warning-line bg-warning-soft text-warning">
+                              En curso
+                            </span>
+                          ) : null}
+                        </span>
+
+                        <ActionForm action={deleteVacation} feedback="none">
+                          <input type="hidden" name="id" value={row.id} />
+                          <SubmitButton className="btn btn-ghost btn-sm" pendingLabel="…">
+                            <Icon name="trash" className="size-3.5" />
+                            <span className="sr-only">Eliminar período</span>
+                          </SubmitButton>
+                        </ActionForm>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                <ActionForm action={addVacation} resetOnSuccess>
+                  <input type="hidden" name="professionalId" value={person.id} />
+
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div>
+                      <label className="field-label" htmlFor={`vac-start-${person.id}`}>
+                        Desde
+                      </label>
+                      <input
+                        id={`vac-start-${person.id}`}
+                        name="startDate"
+                        type="date"
+                        className="input"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="field-label" htmlFor={`vac-end-${person.id}`}>
+                        Hasta (inclusive)
+                      </label>
+                      <input
+                        id={`vac-end-${person.id}`}
+                        name="endDate"
+                        type="date"
+                        className="input"
+                        required
+                      />
+                    </div>
+
+                    <div className="min-w-40 flex-1">
+                      <label className="field-label" htmlFor={`vac-note-${person.id}`}>
+                        Nota
+                      </label>
+                      <input
+                        id={`vac-note-${person.id}`}
+                        name="note"
+                        className="input"
+                        placeholder="Opcional"
+                        maxLength={80}
+                      />
+                    </div>
+
+                    <SubmitButton className="btn btn-secondary">
+                      <Icon name="plus" className="size-3.5" />
+                      Agregar
+                    </SubmitButton>
+                  </div>
+
+                  <p className="mt-2 text-xs text-ink-muted">
+                    Los turnos ya reservados en esas fechas no se cancelan solos:
+                    revisalos en la agenda y avisales a las clientas.
+                  </p>
+                </ActionForm>
+              </div>
+            </details>
+          </section>
+        );
+      })}
+
+      {/* ── Alta ─────────────────────────────────────────────────────── */}
+      <section className="panel overflow-hidden">
+        <div className="border-b border-line px-4 py-3">
+          <h2 className="text-sm font-medium">Agregar una profesional</h2>
+        </div>
+
+        <ActionForm action={saveProfessional} className="p-4" resetOnSuccess>
+          <input type="hidden" name="active" value="on" />
+
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-44 flex-1">
+              <label className="field-label" htmlFor="new-name">
+                Nombre
+              </label>
+              <input id="new-name" name="name" className="input" required maxLength={60} />
+            </div>
+
+            <div className="min-w-44 flex-1">
+              <label className="field-label" htmlFor="new-specialty">
+                Qué hace
+              </label>
+              <input
+                id="new-specialty"
+                name="specialty"
+                className="input"
+                placeholder="Cejas y pestañas"
+                maxLength={60}
+              />
+            </div>
+
+            <SubmitButton className="btn btn-primary">
+              <Icon name="plus" className="size-4" />
+              Agregar
+            </SubmitButton>
+          </div>
+
+          <p className="mt-2 text-xs text-ink-muted">
+            Después cargale al menos un servicio y sus horarios para que se le
+            puedan sacar turnos.
+          </p>
+        </ActionForm>
+      </section>
+    </div>
+  );
+}

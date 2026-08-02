@@ -1,0 +1,193 @@
+import { sql } from "drizzle-orm";
+import {
+  index,
+  integer,
+  real,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
+
+/**
+ * Convenciones del esquema:
+ *
+ * - Las fechas se guardan como texto 'YYYY-MM-DD' en la zona horaria del
+ *   negocio, nunca como timestamps UTC. Evita por completo los errores de
+ *   desplazamiento por horario de verano al calcular disponibilidad.
+ * - Las horas se guardan como minutos desde la medianoche (int). Comparar
+ *   y sumar rangos horarios pasa a ser aritmética entera.
+ * - Los momentos absolutos (creado, cancelado) sí son timestamps unix en
+ *   segundos, porque ahí sí importa el instante real.
+ */
+
+export const professionals = sqliteTable("professionals", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  /** Rubro visible bajo el nombre en la web pública. Ej: "Uñas", "Cejas". */
+  specialty: text("specialty").notNull().default(""),
+  photoUrl: text("photo_url"),
+  bio: text("bio").notNull().default(""),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  /** Toggle inmediato e indefinido. Los rangos con fecha van en `vacations`. */
+  onVacation: integer("on_vacation", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  createdAt: integer("created_at")
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+export const services = sqliteTable(
+  "services",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    professionalId: integer("professional_id")
+      .notNull()
+      .references(() => professionals.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    durationMinutes: integer("duration_minutes").notNull(),
+    /** Opcional: si es null no se muestra precio en ninguna pantalla. */
+    price: real("price"),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [index("services_professional_idx").on(t.professionalId)],
+);
+
+export const vacations = sqliteTable(
+  "vacations",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    professionalId: integer("professional_id")
+      .notNull()
+      .references(() => professionals.id, { onDelete: "cascade" }),
+    startDate: text("start_date").notNull(),
+    /** Inclusivo: el último día de vacaciones también está bloqueado. */
+    endDate: text("end_date").notNull(),
+    note: text("note").notNull().default(""),
+  },
+  (t) => [index("vacations_professional_idx").on(t.professionalId)],
+);
+
+/** Horario semanal recurrente. Varias filas por día = varios turnos (mañana/tarde). */
+export const workingHours = sqliteTable(
+  "working_hours",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    professionalId: integer("professional_id")
+      .notNull()
+      .references(() => professionals.id, { onDelete: "cascade" }),
+    /** 0 = domingo … 6 = sábado (igual que Date.getDay). */
+    weekday: integer("weekday").notNull(),
+    startMinute: integer("start_minute").notNull(),
+    endMinute: integer("end_minute").notNull(),
+  },
+  (t) => [
+    index("working_hours_professional_idx").on(t.professionalId, t.weekday),
+  ],
+);
+
+/**
+ * Excepciones puntuales que pisan al horario semanal para una fecha concreta.
+ * kind='closed'  → ese día no atiende (start/end se ignoran)
+ * kind='custom'  → ese día atiende exactamente en los rangos declarados acá
+ */
+export const scheduleOverrides = sqliteTable(
+  "schedule_overrides",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    professionalId: integer("professional_id")
+      .notNull()
+      .references(() => professionals.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    kind: text("kind", { enum: ["closed", "custom"] }).notNull(),
+    startMinute: integer("start_minute"),
+    endMinute: integer("end_minute"),
+    note: text("note").notNull().default(""),
+  },
+  (t) => [index("overrides_professional_date_idx").on(t.professionalId, t.date)],
+);
+
+export const appointments = sqliteTable(
+  "appointments",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    professionalId: integer("professional_id")
+      .notNull()
+      .references(() => professionals.id),
+    /** Se conserva aunque el servicio se borre: el turno guarda su propia copia. */
+    serviceId: integer("service_id"),
+    serviceName: text("service_name").notNull().default(""),
+    date: text("date").notNull(),
+    startMinute: integer("start_minute").notNull(),
+    endMinute: integer("end_minute").notNull(),
+    status: text("status", {
+      enum: ["booked", "cancelled_by_client", "cancelled_by_admin"],
+    })
+      .notNull()
+      .default("booked"),
+    firstName: text("first_name").notNull(),
+    lastName: text("last_name").notNull(),
+    dni: text("dni").notNull(),
+    email: text("email").notNull(),
+    phone: text("phone").notNull().default(""),
+    /**
+     * Solo el hash SHA-256 del token de cancelación. El token en claro existe
+     * únicamente en el link que recibe el cliente, así un volcado de la base
+     * no permite cancelar turnos ajenos.
+     */
+    cancelTokenHash: text("cancel_token_hash").notNull(),
+    createdAt: integer("created_at")
+      .notNull()
+      .default(sql`(unixepoch())`),
+    cancelledAt: integer("cancelled_at"),
+  },
+  (t) => [
+    uniqueIndex("appointments_cancel_token_idx").on(t.cancelTokenHash),
+    index("appointments_date_idx").on(t.date, t.professionalId),
+    index("appointments_lookup_idx").on(t.dni, t.email),
+  ],
+);
+
+export const adminUsers = sqliteTable("admin_users", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  username: text("username").notNull().unique(),
+  passwordHash: text("password_hash").notNull(),
+  displayName: text("display_name").notNull().default(""),
+  /** owner: acceso total. staff: solo la agenda de turnos. */
+  role: text("role", { enum: ["owner", "staff"] })
+    .notNull()
+    .default("owner"),
+  createdAt: integer("created_at")
+    .notNull()
+    .default(sql`(unixepoch())`),
+  lastLoginAt: integer("last_login_at"),
+});
+
+/** Configuración clave/valor. Todo lo que distingue a un negocio de otro. */
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
+
+/**
+ * Contadores de intentos para el login y la búsqueda por DNI.
+ *
+ * Están en la base y no en memoria porque en producción corren varias
+ * instancias del servidor a la vez: con contadores por proceso, el límite real
+ * se multiplicaría por la cantidad de instancias.
+ */
+export const rateLimits = sqliteTable("rate_limits", {
+  key: text("key").primaryKey(),
+  count: integer("count").notNull(),
+  resetAt: integer("reset_at").notNull(),
+});
+
+export type Professional = typeof professionals.$inferSelect;
+export type Service = typeof services.$inferSelect;
+export type Vacation = typeof vacations.$inferSelect;
+export type WorkingHour = typeof workingHours.$inferSelect;
+export type ScheduleOverride = typeof scheduleOverrides.$inferSelect;
+export type Appointment = typeof appointments.$inferSelect;
+export type AdminUser = typeof adminUsers.$inferSelect;
