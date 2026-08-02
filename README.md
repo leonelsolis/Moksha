@@ -81,6 +81,28 @@ La duración del turno sale del servicio. Cada profesional puede tener:
 Es el mismo lugar donde se cambia "cuánto dura un turno": se edita la duración
 del servicio.
 
+### Qué es cada servicio (la ficha al costado)
+
+En la web pública, cuando la clienta elige un servicio aparece una tarjeta al
+costado —debajo de la elección en el celular— que explica de qué se trata. Sirve
+para lo que no todo el mundo sabe qué es: kapping, esmaltado semipermanente,
+laminado de cejas.
+
+Se carga en **Servicios**, y ahí hay dos cosas por servicio:
+
+- **Qué es** — el texto, hasta 400 caracteres. Si queda vacío no aparece
+  ninguna ficha.
+- **Foto de ejemplo** — opcional, con un check *Mostrar la foto en la web*. Con
+  el check apagado la ficha sale igual, solo que sin el recuadro de la foto. Sin
+  foto cargada el check queda deshabilitado; al subir la primera se enciende
+  solo.
+
+Es la única pantalla de configuración que comparten los dos roles: **cada
+profesional escribe la de sus propios servicios y no puede tocar la de la otra**;
+la administración las ve todas, agrupadas por profesional. El nombre, la
+duración y el precio se siguen cargando en **Profesionales**, solo desde una
+cuenta `admin`.
+
 ### Vacaciones
 
 Dos formas, según el caso:
@@ -102,10 +124,10 @@ fechas: revisalos en la agenda y avisales vos a las clientas.
 Todos entran por el mismo `/admin`, con su propio usuario y contraseña. Lo que
 ven después depende del rol:
 
-| Rol | Turnos | Horarios y vacaciones | Profesionales, Usuarios y Ajustes |
-|---|---|---|---|
-| `admin` | de todas, con filtro por profesional | de todas | sí |
-| `profesional` | **solo los suyos** | **solo los suyos** | no |
+| Rol | Turnos | Horarios y vacaciones | Fichas de servicios | Profesionales, Usuarios y Ajustes |
+|---|---|---|---|---|
+| `admin` | de todas, con filtro por profesional | de todas | de todas | sí |
+| `profesional` | **solo los suyos** | **solo los suyos** | **solo los suyos** | no |
 
 Una cuenta `profesional` está atada a una fila de `professionals` por su campo
 `professional_id`. Ese vínculo es lo que define qué ve: sin él la cuenta no ve
@@ -231,6 +253,7 @@ Las imágenes se suben desde el panel y aparecen al instante, sin volver a
 publicar el proyecto. Se pueden cambiar desde la computadora o el celular.
 
 - **Fotos de las profesionales:** Profesionales → Foto y datos → Subir foto.
+- **Fotos de los servicios:** Servicios → Foto de ejemplo → Subir foto.
 - **Logo del negocio:** Ajustes → Logo → Subir logo.
 
 No van en la carpeta `public/`: eso es parte del código, así que cada foto
