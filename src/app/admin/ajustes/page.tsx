@@ -1,9 +1,10 @@
-import { saveSettings } from "@/app/actions/admin";
+import { saveSettings, sendTestEmailAction } from "@/app/actions/admin";
 import { removeLogo, uploadLogo } from "@/app/actions/photos";
+import { Alert } from "@/components/Alert";
 import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
 import { ImageUpload } from "@/components/admin/ImageUpload";
-import { PasswordForm } from "@/components/admin/PasswordForm";
-import { requireOwner } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
+import { emailConfig } from "@/lib/email";
 import { getSettings, settingBool } from "@/lib/settings";
 
 /**
@@ -19,9 +20,10 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Ajustes" };
 
 export default async function SettingsPage() {
-  await requireOwner();
+  await requireAdmin();
 
   const settings = await getSettings();
+  const mail = emailConfig(settings);
 
   return (
     <div className="space-y-5">
@@ -257,12 +259,30 @@ export default async function SettingsPage() {
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-sm font-medium">Emails de confirmación</h2>
             <p className="mt-0.5 text-xs text-ink-soft">
-              Desactivados hasta que haya hosting y un dominio propio. Mientras
-              tanto el cliente recibe su link en la pantalla de confirmación.
+              Se mandan con Resend al reservar y al cancelar: uno al cliente y
+              otro a la profesional, al email de contacto de su cuenta. El
+              cliente ve su link en pantalla igual, así que un mail que no llega
+              no le impide manejar el turno.
             </p>
           </div>
 
           <div className="space-y-3 p-4">
+            {!mail.hasKey ? (
+              <Alert tone="error">
+                Falta cargar <code>RESEND_API_KEY</code> en el servidor. Hasta que
+                esté, no sale ningún mail aunque marques la casilla.
+              </Alert>
+            ) : mail.enabled && !mail.from ? (
+              <Alert tone="warning">
+                El envío está activado pero falta la dirección remitente, así que
+                no sale ningún mail.
+              </Alert>
+            ) : mail.ready ? (
+              <Alert tone="success">
+                Los emails están activos y saliendo desde {mail.from}.
+              </Alert>
+            ) : null}
+
             <label className="flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
@@ -273,9 +293,9 @@ export default async function SettingsPage() {
               <span>
                 Enviar emails al reservar y al cancelar
                 <span className="mt-0.5 block text-xs text-ink-muted">
-                  Requiere una cuenta de Resend con el dominio verificado y la
-                  clave <code>RESEND_API_KEY</code> cargada en el servidor. Ver el
-                  README.
+                  Requiere una cuenta de Resend con el dominio verificado. Ver el
+                  README. Cubre también los avisos a las profesionales: si está
+                  apagado, no reciben ninguno.
                 </span>
               </span>
             </label>
@@ -292,6 +312,11 @@ export default async function SettingsPage() {
                 defaultValue={settings.email_from}
                 placeholder="turnos@tudominio.com"
               />
+              <p className="mt-1 text-xs text-ink-muted">
+                Tiene que ser de un dominio verificado en Resend. Para probar sin
+                dominio propio podés usar <code>onboarding@resend.dev</code>, pero
+                Resend solo lo deja llegar a tu propia casilla.
+              </p>
             </div>
           </div>
         </section>
@@ -299,15 +324,41 @@ export default async function SettingsPage() {
         <SubmitButton className="btn btn-primary">Guardar ajustes</SubmitButton>
       </ActionForm>
 
-      {/* ── Contraseña ─────────────────────────────────────────────── */}
+      {/* Va afuera del formulario de ajustes por la misma razón que el logo: un
+          formulario no puede contener a otro. */}
       <section className="panel overflow-hidden">
         <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-medium">Tu contraseña</h2>
+          <h2 className="text-sm font-medium">Probar el envío</h2>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            Manda un mail suelto para ver si la configuración anda, sin tener que
+            sacar un turno de mentira. Funciona aunque el envío automático esté
+            apagado. Guardá los ajustes antes de probar.
+          </p>
         </div>
+
         <div className="p-4">
-          <PasswordForm />
+          <ActionForm action={sendTestEmailAction} className="space-y-3">
+            <div className="max-w-sm">
+              <label className="field-label" htmlFor="test-email">
+                Enviar a
+              </label>
+              <input
+                id="test-email"
+                name="to"
+                type="email"
+                className="input"
+                placeholder="vos@ejemplo.com"
+                required
+              />
+            </div>
+
+            <SubmitButton className="btn btn-ghost" pendingLabel="Enviando…">
+              Enviar prueba
+            </SubmitButton>
+          </ActionForm>
         </div>
       </section>
+
     </div>
   );
 }

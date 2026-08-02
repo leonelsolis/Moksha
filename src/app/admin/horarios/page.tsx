@@ -3,37 +3,51 @@ import { asc, eq, gte, and } from "drizzle-orm";
 
 import {
   addOverride,
+  addVacation,
   addWorkingHour,
   copyWorkingDay,
   deleteOverride,
+  deleteVacation,
   deleteWorkingHour,
+  toggleVacation,
 } from "@/app/actions/admin";
 import { Alert } from "@/components/Alert";
 import { Icon } from "@/components/Icon";
 import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
 import { db } from "@/db";
-import { professionals, scheduleOverrides, workingHours } from "@/db/schema";
-import { requireOwner } from "@/lib/auth";
+import {
+  professionals,
+  scheduleOverrides,
+  vacations,
+  workingHours,
+} from "@/db/schema";
+import { requireUser, scopeOf } from "@/lib/auth";
 import {
   WEEKDAY_NAMES,
   WEEKDAY_ORDER,
   formatDateLong,
   formatMinute,
+  isWithin,
   nowInTz,
 } from "@/lib/dates";
 import { getSettings } from "@/lib/settings";
 
 /**
- * Horarios de atención de cada profesional.
+ * Disponibilidad de cada profesional: cuándo atiende y cuándo no.
  *
- * Dos niveles, a propósito:
+ * Tres niveles, a propósito:
  *   · El horario semanal es lo que se repite todas las semanas. Se carga una
  *     vez y no se toca más.
  *   · Las excepciones son para fechas puntuales (un feriado, un día que se
  *     abre distinto) y pisan al horario semanal solo ese día.
+ *   · Las vacaciones bloquean un rango entero de días.
  *
  * Sin esa separación, un feriado obligaría a borrar el horario del día y a
  * volver a cargarlo después.
+ *
+ * Es la única pantalla de configuración que abren las profesionales, y cada
+ * una ve solamente lo suyo: el selector de arriba no aparece y el id que viaja
+ * en los formularios es el de su propia cuenta.
  */
 
 export const dynamic = "force-dynamic";
@@ -45,28 +59,40 @@ export default async function SchedulePage({
 }: {
   searchParams: Promise<{ prof?: string }>;
 }) {
-  await requireOwner();
+  const account = await requireUser();
+  const scope = scopeOf(account);
 
   const params = await searchParams;
   const settings = await getSettings();
   const today = nowInTz(settings.timezone).date;
 
-  const staff = await db
+  const all = await db
     .select()
     .from(professionals)
     .orderBy(asc(professionals.sortOrder), asc(professionals.name));
+
+  // Una profesional solo puede llegar a la suya, venga lo que venga en la URL.
+  const staff = scope === null ? all : all.filter((p) => p.id === scope);
 
   if (staff.length === 0) {
     return (
       <div className="space-y-4">
         <h1 className="text-xl font-semibold tracking-tight">Horarios</h1>
-        <Alert tone="info" title="Todavía no hay profesionales">
-          Primero cargá al menos una profesional en{" "}
-          <Link href="/admin/profesionales" className="underline underline-offset-4">
-            Profesionales
-          </Link>
-          , después definí sus horarios acá.
-        </Alert>
+
+        {scope === null ? (
+          <Alert tone="info" title="Todavía no hay profesionales">
+            Primero cargá al menos una profesional en{" "}
+            <Link href="/admin/profesionales" className="underline underline-offset-4">
+              Profesionales
+            </Link>
+            , después definí sus horarios acá.
+          </Alert>
+        ) : (
+          <Alert tone="warning" title="Tu cuenta no está vinculada a ninguna profesional">
+            Por eso no hay horarios para mostrar. Pedile a la administración que
+            vincule tu cuenta desde Usuarios.
+          </Alert>
+        )}
       </div>
     );
   }
@@ -74,7 +100,7 @@ export default async function SchedulePage({
   const selectedId = Number(params.prof) || staff[0].id;
   const selected = staff.find((p) => p.id === selectedId) ?? staff[0];
 
-  const [hours, overrides] = await Promise.all([
+  const [hours, overrides, vacationRows] = await Promise.all([
     db
       .select()
       .from(workingHours)
@@ -90,6 +116,16 @@ export default async function SchedulePage({
         ),
       )
       .orderBy(asc(scheduleOverrides.date)),
+    db
+      .select()
+      .from(vacations)
+      .where(
+        and(
+          eq(vacations.professionalId, selected.id),
+          gte(vacations.endDate, today),
+        ),
+      )
+      .orderBy(asc(vacations.startDate)),
   ]);
 
   const byWeekday = new Map<number, typeof hours>();
@@ -103,33 +139,175 @@ export default async function SchedulePage({
     (day) => (byWeekday.get(day)?.length ?? 0) > 0,
   );
 
+  const currentVacation = vacationRows.find((row) =>
+    isWithin(today, row.startDate, row.endDate),
+  );
+
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">Horarios</h1>
+        <h1 className="text-xl font-semibold tracking-tight">
+          {scope === null ? "Horarios" : `Tus horarios`}
+        </h1>
         <p className="mt-0.5 text-sm text-ink-soft">
-          Definí en qué días y a qué horas atiende cada profesional.
+          {scope === null
+            ? "Definí en qué días y a qué horas atiende cada profesional, y cuándo se toma vacaciones."
+            : "Definí en qué días y a qué horas atendés, y cuándo te tomás vacaciones."}
         </p>
       </div>
 
-      {/* Selector de profesional */}
-      <div className="flex flex-wrap gap-1.5">
-        {staff.map((person) => (
-          <Link
-            key={person.id}
-            href={`/admin/horarios?prof=${person.id}`}
-            aria-current={person.id === selected.id ? "page" : undefined}
-            className={`rounded-sm border px-3 py-1.5 text-sm transition-colors ${
-              person.id === selected.id
-                ? "border-accent bg-accent text-white"
-                : "border-line-strong bg-surface text-ink-soft hover:bg-surface-sunken"
-            }`}
-          >
-            {person.name}
-            {!person.active ? " (inactiva)" : ""}
-          </Link>
-        ))}
-      </div>
+      {/* Selector de profesional: solo tiene sentido si se ve más de una. */}
+      {staff.length > 1 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {staff.map((person) => (
+            <Link
+              key={person.id}
+              href={`/admin/horarios?prof=${person.id}`}
+              aria-current={person.id === selected.id ? "page" : undefined}
+              className={`rounded-sm border px-3 py-1.5 text-sm transition-colors ${
+                person.id === selected.id
+                  ? "border-accent bg-accent text-white"
+                  : "border-line-strong bg-surface text-ink-soft hover:bg-surface-sunken"
+              }`}
+            >
+              {person.name}
+              {!person.active ? " (inactiva)" : ""}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+
+      {/* ── Vacaciones ───────────────────────────────────────────────── */}
+      <section className="panel overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-medium">Vacaciones</h2>
+            <p className="mt-0.5 text-xs text-ink-soft">
+              Los días bloqueados desaparecen de la web pública.
+            </p>
+          </div>
+
+          {/* Interruptor inmediato, para cuando no se sabe hasta cuándo. */}
+          <ActionForm action={toggleVacation} feedback="none">
+            <input type="hidden" name="id" value={selected.id} />
+            <input
+              type="hidden"
+              name="onVacation"
+              value={selected.onVacation ? "false" : "true"}
+            />
+            <SubmitButton className="btn btn-secondary btn-sm" pendingLabel="…">
+              <Icon name="vacation" className="size-3.5" />
+              {selected.onVacation
+                ? "Volvió de vacaciones"
+                : "Marcar de vacaciones ahora"}
+            </SubmitButton>
+          </ActionForm>
+        </div>
+
+        {selected.onVacation ? (
+          <p className="border-b border-line bg-warning-soft px-4 py-2 text-xs text-warning">
+            Marcada de vacaciones sin fecha de vuelta. No se le pueden sacar
+            turnos hasta que se desmarque.
+          </p>
+        ) : currentVacation ? (
+          <p className="border-b border-line bg-warning-soft px-4 py-2 text-xs text-warning">
+            De vacaciones hasta el {formatDateLong(currentVacation.endDate, true)}{" "}
+            inclusive.
+          </p>
+        ) : null}
+
+        {vacationRows.length > 0 ? (
+          <ul className="divide-y divide-line border-b border-line">
+            {vacationRows.map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5"
+              >
+                <span className="text-sm">
+                  <span className="first-letter:uppercase">
+                    {formatDateLong(row.startDate)}
+                  </span>
+                  <span className="text-ink-muted"> al </span>
+                  <span>{formatDateLong(row.endDate, true)}</span>
+
+                  {row.note ? (
+                    <span className="ml-2 text-xs text-ink-muted">{row.note}</span>
+                  ) : null}
+
+                  {isWithin(today, row.startDate, row.endDate) ? (
+                    <span className="badge ml-2 border-warning-line bg-warning-soft text-warning">
+                      En curso
+                    </span>
+                  ) : null}
+                </span>
+
+                <ActionForm action={deleteVacation} feedback="none">
+                  <input type="hidden" name="id" value={row.id} />
+                  <SubmitButton className="btn btn-ghost btn-sm" pendingLabel="…">
+                    <Icon name="trash" className="size-3.5" />
+                    <span className="sr-only">Eliminar período</span>
+                  </SubmitButton>
+                </ActionForm>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <ActionForm action={addVacation} className="p-4" resetOnSuccess>
+          <input type="hidden" name="professionalId" value={selected.id} />
+
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="field-label" htmlFor="vac-start">
+                Desde
+              </label>
+              <input
+                id="vac-start"
+                name="startDate"
+                type="date"
+                className="input"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="vac-end">
+                Hasta (inclusive)
+              </label>
+              <input
+                id="vac-end"
+                name="endDate"
+                type="date"
+                className="input"
+                required
+              />
+            </div>
+
+            <div className="min-w-40 flex-1">
+              <label className="field-label" htmlFor="vac-note">
+                Nota
+              </label>
+              <input
+                id="vac-note"
+                name="note"
+                className="input"
+                placeholder="Opcional"
+                maxLength={80}
+              />
+            </div>
+
+            <SubmitButton className="btn btn-secondary">
+              <Icon name="plus" className="size-3.5" />
+              Agregar
+            </SubmitButton>
+          </div>
+
+          <p className="mt-2 text-xs text-ink-muted">
+            Los turnos ya reservados en esas fechas no se cancelan solos:
+            revisalos en la agenda y avisales a las clientas.
+          </p>
+        </ActionForm>
+      </section>
 
       {/* ── Horario semanal ──────────────────────────────────────────── */}
       <section className="panel overflow-hidden">

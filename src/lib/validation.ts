@@ -11,6 +11,15 @@
 
 export type FieldErrors = Record<string, string>;
 
+/**
+ * Tope de la explicación de un servicio.
+ *
+ * Es una definición corta al costado del flujo de reserva, no una descripción
+ * de catálogo: pasado ese largo deja de leerse y empieza a empujar el resto de
+ * la página. El mismo número limita el campo del panel y lo que se guarda.
+ */
+export const SERVICE_DESCRIPTION_MAX = 400;
+
 export type CustomerInput = {
   firstName: string;
   lastName: string;
@@ -41,6 +50,11 @@ export function normalizeEmail(value: string) {
 
 export function normalizeName(value: string) {
   return value.trim().replace(/\s+/g, " ");
+}
+
+/** Espera una dirección ya normalizada. */
+export function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value) && value.length <= 200;
 }
 
 function validateName(value: string, label: string) {
@@ -76,7 +90,7 @@ export function validateCustomer(input: CustomerInput): {
   const email = normalizeEmail(input.email);
   if (!email) {
     errors.email = "Ingresá tu email.";
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 200) {
+  } else if (!isValidEmail(email)) {
     errors.email = "Revisá el email, no parece válido.";
   }
 

@@ -138,6 +138,28 @@ const PATHS = {
       <path d="M18 14.4a6.5 6.5 0 0 1 3.25 5.1" />
     </>
   ),
+  /** Candado: los datos de acceso propios (contraseña, email de contacto). */
+  lock: (
+    <>
+      <rect x="4.25" y="10.5" width="15.5" height="9.75" rx="1.5" />
+      <path d="M7.75 10.5V7.75a4.25 4.25 0 0 1 8.5 0v2.75" />
+    </>
+  ),
+  /** Llave: las cuentas que pueden entrar al panel. */
+  key: (
+    <>
+      <circle cx="8" cy="15.75" r="4.25" />
+      <line x1="11.1" y1="12.65" x2="19.75" y2="4" />
+      <line x1="17" y1="6.75" x2="19.25" y2="9" />
+    </>
+  ),
+  /** Etiqueta: la ficha que explica cada servicio. */
+  tag: (
+    <>
+      <path d="M11.6 3.75H5.25a1.5 1.5 0 0 0-1.5 1.5v6.35a2 2 0 0 0 .59 1.42l7 7a1.5 1.5 0 0 0 2.12 0l6.16-6.16a1.5 1.5 0 0 0 0-2.12l-7-7a2 2 0 0 0-1.42-.59z" />
+      <line x1="8" y1="8" x2="8.1" y2="8" />
+    </>
+  ),
   /** Sombrilla: señala a una profesional de vacaciones. */
   vacation: (
     <>

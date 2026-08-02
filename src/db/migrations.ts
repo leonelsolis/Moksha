@@ -141,6 +141,57 @@ const MIGRATIONS: string[][] = [
      )`,
     `CREATE INDEX IF NOT EXISTS rate_limits_reset_idx ON rate_limits(reset_at)`,
   ],
+
+  // ── v3 · una cuenta por profesional ─────────────────────────────────────
+  [
+    /**
+     * Cada cuenta del panel puede quedar atada a una profesional.
+     *
+     * `professional_id` es lo que permite aislar los datos: con él puesto, el
+     * usuario solo ve los turnos, horarios y vacaciones de esa profesional. En
+     * las cuentas de administración queda en NULL, que significa "todas".
+     *
+     * `email` es la dirección de contacto de la cuenta, no la del negocio: es
+     * a donde le llegan los avisos de turno nuevo y de cancelación, y a futuro
+     * será por donde se recupere la contraseña.
+     *
+     * `active` da de baja una cuenta sin borrarla, para no perder el rastro de
+     * quién hizo qué.
+     */
+    `ALTER TABLE admin_users ADD COLUMN professional_id INTEGER REFERENCES professionals(id)`,
+    `ALTER TABLE admin_users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE admin_users ADD COLUMN active INTEGER NOT NULL DEFAULT 1`,
+    `CREATE INDEX IF NOT EXISTS admin_users_professional_idx ON admin_users(professional_id)`,
+
+    /*
+     * Los roles cambian de nombre junto con su significado. 'owner' pasa a
+     * 'admin' sin perder nada. 'staff' (la vieja recepción, que veía todos los
+     * turnos sin poder configurar) pasa a 'profesional' con professional_id en
+     * NULL: hasta que un admin la vincule a una profesional concreta no ve
+     * ningún turno, que es el lado seguro del cambio.
+     */
+    `UPDATE admin_users SET role = 'admin' WHERE role = 'owner'`,
+    `UPDATE admin_users SET role = 'profesional' WHERE role NOT IN ('admin', 'profesional')`,
+  ],
+
+  // ── v4 · qué es cada servicio ───────────────────────────────────────────
+  [
+    /**
+     * La ficha que explica el servicio en la web pública.
+     *
+     * `description` es el texto ("qué es un kapping"), `photo_url` una imagen
+     * de ejemplo y `show_photo` el interruptor que decide si esa imagen se
+     * muestra. Son tres columnas y no dos porque el texto y la foto se
+     * encienden por separado: se puede querer explicar el servicio sin foto,
+     * y se puede querer guardar una foto sin publicarla todavía.
+     *
+     * `show_photo` arranca apagado: una base existente no empieza a mostrar
+     * recuadros que nadie configuró.
+     */
+    `ALTER TABLE services ADD COLUMN description TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE services ADD COLUMN photo_url TEXT`,
+    `ALTER TABLE services ADD COLUMN show_photo INTEGER NOT NULL DEFAULT 0`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

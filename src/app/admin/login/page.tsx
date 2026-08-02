@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { Alert } from "@/components/Alert";
 import { LoginForm } from "@/components/admin/LoginForm";
 import { getSettings } from "@/lib/settings";
 
@@ -10,9 +11,9 @@ export const metadata = { title: "Entrar al panel", robots: { index: false } };
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ volver?: string }>;
+  searchParams: Promise<{ volver?: string; sesion?: string }>;
 }) {
-  const { volver } = await searchParams;
+  const { volver, sesion } = await searchParams;
   const settings = await getSettings();
 
   const returnTo = volver?.startsWith("/admin") ? volver : "/admin";
@@ -28,6 +29,15 @@ export default async function LoginPage({
           Entrá para ver los turnos y gestionar los horarios.
         </p>
       </div>
+
+      {sesion === "cerrada" ? (
+        <div className="mb-4">
+          <Alert tone="warning">
+            Se cerró tu sesión porque tu cuenta ya no tiene acceso al panel.
+            Consultá con la administración.
+          </Alert>
+        </div>
+      ) : null}
 
       <div className="panel p-5">
         <LoginForm returnTo={returnTo} />

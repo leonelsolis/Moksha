@@ -9,14 +9,16 @@ import { Alert } from "@/components/Alert";
 import { Field } from "@/components/Field";
 import { Icon } from "@/components/Icon";
 import { formatDateLong, formatMinute } from "@/lib/dates";
-import type {
-  AvailabilityMap,
-  BookingWindowView,
-  PublicProfessionalView,
-  PublicService,
+import {
+  hasServiceInfo,
+  type AvailabilityMap,
+  type BookingWindowView,
+  type PublicProfessionalView,
+  type PublicService,
 } from "@/lib/public-types";
 import { Calendar } from "./Calendar";
 import { ProfessionalCard } from "./ProfessionalCard";
+import { ServiceInfo } from "./ServiceInfo";
 import { SlotPicker } from "./SlotPicker";
 
 /**
@@ -30,6 +32,10 @@ import { SlotPicker } from "./SlotPicker";
  *
  * La disponibilidad de toda la ventana de reserva se pide de una sola vez al
  * elegir el servicio, así moverse entre días y meses es instantáneo.
+ *
+ * Al costado va la ficha del servicio elegido (qué es, y su foto si está
+ * activada). No puede vivir dentro del paso porque el paso se colapsa apenas se
+ * elige: la ficha es un elemento aparte que acompaña al resto del flujo.
  */
 
 type Props = {
@@ -144,223 +150,250 @@ export function BookingFlow({ professionals, window, cancelCutoffHours }: Props)
     showServiceStep,
   });
 
-  return (
-    <div className="space-y-3">
-      {/* ── Paso 1 · profesional ─────────────────────────────────────── */}
-      <Step
-        number={1}
-        title="Elegí con quién"
-        state={steps.professional}
-        summary={professional?.name}
-        onEdit={() => {
-          setProfessional(null);
-          setService(null);
-          setDate(null);
-          setStartMinute(null);
-        }}
-      >
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {professionals.map((item) => (
-            <ProfessionalCard
-              key={item.id}
-              data={item}
-              selected={professional?.id === item.id}
-              onSelect={() => selectProfessional(item)}
-            />
-          ))}
-        </div>
-      </Step>
+  /*
+   * La ficha se arma una sola vez y se coloca en dos lugares excluyentes por
+   * CSS: al costado en pantallas anchas, dentro del flujo en las angostas.
+   * El `key` la remonta al cambiar de servicio, que es lo que repite la
+   * animación de entrada.
+   */
+  const info = service ? <ServiceInfo key={service.id} service={service} /> : null;
 
-      {/* ── Paso 2 · servicio (solo si hay más de uno) ───────────────── */}
-      {showServiceStep ? (
+  // La columna del costado solo se reserva si hay algo que pueda ir ahí; si el
+  // negocio no cargó ninguna explicación, la página queda exactamente como antes.
+  const withAside = professionals.some((item) =>
+    item.services.some(hasServiceInfo),
+  );
+
+  return (
+    <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+      <div className={`min-w-0 flex-1 space-y-3 ${withAside ? "xl:max-w-3xl" : ""}`}>
+        {/* ── Paso 1 · profesional ─────────────────────────────────────── */}
         <Step
-          number={2}
-          title="Elegí el servicio"
-          state={steps.service}
-          summary={service ? `${service.name} · ${service.durationMinutes} min` : undefined}
+          number={1}
+          title="Elegí con quién"
+          state={steps.professional}
+          summary={professional?.name}
           onEdit={() => {
+            setProfessional(null);
             setService(null);
             setDate(null);
             setStartMinute(null);
           }}
         >
-          <div className="grid gap-2 sm:grid-cols-2">
-            {professional?.services.map((item) => (
-              <button
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {professionals.map((item) => (
+              <ProfessionalCard
                 key={item.id}
-                type="button"
-                onClick={() => selectService(item)}
-                aria-pressed={service?.id === item.id}
-                className={`flex items-center justify-between gap-3 rounded-sm border p-3 text-left transition-colors ${
-                  service?.id === item.id
-                    ? "border-accent bg-accent-soft"
-                    : "border-line-strong bg-surface hover:bg-surface-sunken"
-                }`}
-              >
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium">{item.name}</span>
-                  <span className="mt-0.5 block text-xs text-ink-soft tabular">
-                    {item.durationMinutes} min
-                    {item.price != null
-                      ? ` · $${item.price.toLocaleString("es-AR")}`
-                      : ""}
-                  </span>
-                </span>
-                {service?.id === item.id ? (
-                  <Icon name="check" className="size-4 shrink-0 text-accent" />
-                ) : null}
-              </button>
+                data={item}
+                selected={professional?.id === item.id}
+                onSelect={() => selectProfessional(item)}
+              />
             ))}
           </div>
         </Step>
-      ) : null}
 
-      {/* ── Paso 3 · fecha ───────────────────────────────────────────── */}
-      <Step
-        number={showServiceStep ? 3 : 2}
-        title="Elegí el día"
-        state={steps.date}
-        summary={date ? capitalize(formatDateLong(date)) : undefined}
-        onEdit={() => {
-          setDate(null);
-          setStartMinute(null);
-        }}
-      >
-        {loadError ? (
-          <Alert tone="error">{loadError}</Alert>
-        ) : loading && availableDates.size === 0 ? (
-          <p className="py-8 text-center text-sm text-ink-muted">
-            Buscando horarios disponibles…
-          </p>
-        ) : availableDates.size === 0 ? (
-          <Alert tone="info" title="No hay turnos disponibles">
-            No quedan horarios libres en los próximos días. Escribinos y vemos
-            cómo darte una mano.
-          </Alert>
-        ) : (
-          <Calendar
-            today={window.today}
-            lastDate={window.lastDate}
-            availableDates={availableDates}
-            selected={date}
-            loading={loading}
-            onSelect={selectDate}
-          />
-        )}
-      </Step>
+        {/* ── Paso 2 · servicio (solo si hay más de uno) ───────────────── */}
+        {showServiceStep ? (
+          <Step
+            number={2}
+            title="Elegí el servicio"
+            state={steps.service}
+            summary={service ? `${service.name} · ${service.durationMinutes} min` : undefined}
+            onEdit={() => {
+              setService(null);
+              setDate(null);
+              setStartMinute(null);
+            }}
+          >
+            <div className="grid gap-2 sm:grid-cols-2">
+              {professional?.services.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => selectService(item)}
+                  aria-pressed={service?.id === item.id}
+                  className={`flex items-center justify-between gap-3 rounded-sm border p-3 text-left transition-colors ${
+                    service?.id === item.id
+                      ? "border-accent bg-accent-soft"
+                      : "border-line-strong bg-surface hover:bg-surface-sunken"
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{item.name}</span>
+                    <span className="mt-0.5 block text-xs text-ink-soft tabular">
+                      {item.durationMinutes} min
+                      {item.price != null
+                        ? ` · $${item.price.toLocaleString("es-AR")}`
+                        : ""}
+                    </span>
+                  </span>
+                  {service?.id === item.id ? (
+                    <Icon name="check" className="size-4 shrink-0 text-accent" />
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          </Step>
+        ) : null}
 
-      {/* ── Paso 4 · horario ─────────────────────────────────────────── */}
-      <Step
-        number={showServiceStep ? 4 : 3}
-        title="Elegí la hora"
-        state={steps.time}
-        summary={startMinute != null ? `${formatMinute(startMinute)} h` : undefined}
-        onEdit={() => setStartMinute(null)}
-      >
-        <SlotPicker
-          slots={slotsForDate}
-          duration={service?.durationMinutes ?? 0}
-          selected={startMinute}
-          onSelect={selectSlot}
-        />
-      </Step>
+        {/* Ficha del servicio en pantallas angostas: justo debajo de donde se
+            eligió, para que no haya que desplazarse a buscarla. */}
+        {info ? <div className="xl:hidden">{info}</div> : null}
 
-      {/* ── Paso 5 · datos y confirmación ────────────────────────────── */}
-      <div ref={detailsRef} className="scroll-mt-4">
+        {/* ── Paso 3 · fecha ───────────────────────────────────────────── */}
         <Step
-          number={showServiceStep ? 5 : 4}
-          title="Confirmá tus datos"
-          state={steps.details}
+          number={showServiceStep ? 3 : 2}
+          title="Elegí el día"
+          state={steps.date}
+          summary={date ? capitalize(formatDateLong(date)) : undefined}
+          onEdit={() => {
+            setDate(null);
+            setStartMinute(null);
+          }}
         >
-          {professional && service && date && startMinute != null ? (
-            <form action={formAction} className="space-y-4" noValidate>
-              <input type="hidden" name="professionalId" value={professional.id} />
-              <input type="hidden" name="serviceId" value={service.id} />
-              <input type="hidden" name="date" value={date} />
-              <input type="hidden" name="startMinute" value={startMinute} />
-
-              <Summary
-                professional={professional}
-                service={service}
-                date={date}
-                startMinute={startMinute}
-              />
-
-              {state.message ? (
-                <Alert tone="error">{state.message}</Alert>
-              ) : null}
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field
-                  name="firstName"
-                  label="Nombre"
-                  error={state.errors.firstName}
-                  autoComplete="given-name"
-                  maxLength={60}
-                />
-                <Field
-                  name="lastName"
-                  label="Apellido"
-                  error={state.errors.lastName}
-                  autoComplete="family-name"
-                  maxLength={60}
-                />
-                <Field
-                  name="dni"
-                  label="DNI"
-                  error={state.errors.dni}
-                  inputMode="numeric"
-                  placeholder="30123456"
-                  hint="Sin puntos ni espacios"
-                  maxLength={11}
-                />
-                {/*
-                  Teléfono. Para dejar de pedirlo: borrar este campo y quitar la
-                  validación de `phone` en src/lib/validation.ts. La columna
-                  puede quedarse vacía sin romper nada.
-                */}
-                <Field
-                  name="phone"
-                  label="Teléfono"
-                  error={state.errors.phone}
-                  type="tel"
-                  inputMode="tel"
-                  autoComplete="tel"
-                  placeholder="1145678900"
-                  hint="Por si necesitamos avisarte algo"
-                  maxLength={20}
-                />
-                <Field
-                  name="email"
-                  label="Email"
-                  error={state.errors.email}
-                  type="email"
-                  inputMode="email"
-                  autoComplete="email"
-                  placeholder="nombre@email.com"
-                  className="sm:col-span-2"
-                  maxLength={200}
-                />
-              </div>
-
-              <SubmitButton />
-
-              <p className="text-xs text-ink-muted">
-                Al confirmar te damos un link para ver o cancelar tu turno.
-                {cancelCutoffHours > 0
-                  ? ` Podés cancelarlo hasta ${cancelCutoffHours} ${
-                      cancelCutoffHours === 1 ? "hora" : "horas"
-                    } antes.`
-                  : " Podés cancelarlo cuando quieras."}
-              </p>
-            </form>
-          ) : (
-            <p className="text-sm text-ink-muted">
-              Completá los pasos anteriores para cargar tus datos.
+          {loadError ? (
+            <Alert tone="error">{loadError}</Alert>
+          ) : loading && availableDates.size === 0 ? (
+            <p className="py-8 text-center text-sm text-ink-muted">
+              Buscando horarios disponibles…
             </p>
+          ) : availableDates.size === 0 ? (
+            <Alert tone="info" title="No hay turnos disponibles">
+              No quedan horarios libres en los próximos días. Escribinos y vemos
+              cómo darte una mano.
+            </Alert>
+          ) : (
+            <Calendar
+              today={window.today}
+              lastDate={window.lastDate}
+              availableDates={availableDates}
+              selected={date}
+              loading={loading}
+              onSelect={selectDate}
+            />
           )}
         </Step>
+
+        {/* ── Paso 4 · horario ─────────────────────────────────────────── */}
+        <Step
+          number={showServiceStep ? 4 : 3}
+          title="Elegí la hora"
+          state={steps.time}
+          summary={startMinute != null ? `${formatMinute(startMinute)} h` : undefined}
+          onEdit={() => setStartMinute(null)}
+        >
+          <SlotPicker
+            slots={slotsForDate}
+            duration={service?.durationMinutes ?? 0}
+            selected={startMinute}
+            onSelect={selectSlot}
+          />
+        </Step>
+
+        {/* ── Paso 5 · datos y confirmación ────────────────────────────── */}
+        <div ref={detailsRef} className="scroll-mt-4">
+          <Step
+            number={showServiceStep ? 5 : 4}
+            title="Confirmá tus datos"
+            state={steps.details}
+          >
+            {professional && service && date && startMinute != null ? (
+              <form action={formAction} className="space-y-4" noValidate>
+                <input type="hidden" name="professionalId" value={professional.id} />
+                <input type="hidden" name="serviceId" value={service.id} />
+                <input type="hidden" name="date" value={date} />
+                <input type="hidden" name="startMinute" value={startMinute} />
+
+                <Summary
+                  professional={professional}
+                  service={service}
+                  date={date}
+                  startMinute={startMinute}
+                />
+
+                {state.message ? (
+                  <Alert tone="error">{state.message}</Alert>
+                ) : null}
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <Field
+                    name="firstName"
+                    label="Nombre"
+                    error={state.errors.firstName}
+                    autoComplete="given-name"
+                    maxLength={60}
+                  />
+                  <Field
+                    name="lastName"
+                    label="Apellido"
+                    error={state.errors.lastName}
+                    autoComplete="family-name"
+                    maxLength={60}
+                  />
+                  <Field
+                    name="dni"
+                    label="DNI"
+                    error={state.errors.dni}
+                    inputMode="numeric"
+                    placeholder="30123456"
+                    hint="Sin puntos ni espacios"
+                    maxLength={11}
+                  />
+                  {/*
+                    Teléfono. Para dejar de pedirlo: borrar este campo y quitar la
+                    validación de `phone` en src/lib/validation.ts. La columna
+                    puede quedarse vacía sin romper nada.
+                  */}
+                  <Field
+                    name="phone"
+                    label="Teléfono"
+                    error={state.errors.phone}
+                    type="tel"
+                    inputMode="tel"
+                    autoComplete="tel"
+                    placeholder="1145678900"
+                    hint="Por si necesitamos avisarte algo"
+                    maxLength={20}
+                  />
+                  <Field
+                    name="email"
+                    label="Email"
+                    error={state.errors.email}
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    placeholder="nombre@email.com"
+                    className="sm:col-span-2"
+                    maxLength={200}
+                  />
+                </div>
+
+                <SubmitButton />
+
+                <p className="text-xs text-ink-muted">
+                  Al confirmar te damos un link para ver o cancelar tu turno.
+                  {cancelCutoffHours > 0
+                    ? ` Podés cancelarlo hasta ${cancelCutoffHours} ${
+                        cancelCutoffHours === 1 ? "hora" : "horas"
+                      } antes.`
+                    : " Podés cancelarlo cuando quieras."}
+                </p>
+              </form>
+            ) : (
+              <p className="text-sm text-ink-muted">
+                Completá los pasos anteriores para cargar tus datos.
+              </p>
+            )}
+          </Step>
+        </div>
       </div>
+
+      {/* Columna del costado: acompaña al flujo mientras se elige día y hora. */}
+      {withAside ? (
+        <aside className="hidden xl:sticky xl:top-6 xl:block xl:w-72 xl:shrink-0">
+          {info}
+        </aside>
+      ) : null}
     </div>
   );
 }

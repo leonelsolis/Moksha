@@ -5,13 +5,14 @@ import { del, put } from "@vercel/blob";
 import { eq } from "drizzle-orm";
 
 import { db } from "@/db";
-import { professionals } from "@/db/schema";
+import { professionals, services } from "@/db/schema";
 import type { ActionState } from "@/lib/action-state";
-import { requireOwner } from "@/lib/auth";
+import { requireAdmin, requireUser, withScope, type AdminUser } from "@/lib/auth";
 import { getSettings, updateSettings } from "@/lib/settings";
 
 /**
- * Imágenes del negocio: las fotos de las profesionales y el logo.
+ * Imágenes del negocio: las fotos de las profesionales, las de los servicios y
+ * el logo.
  *
  * Se guardan en Vercel Blob y no en la carpeta `public/`. La diferencia es
  * importante: `public/` es parte del código, así que agregar una imagen ahí
@@ -88,28 +89,44 @@ async function subirImagen(
     });
 
     return { url: blob.url };
-  } catch {
+  } catch (e) {
+    // El mensaje que ve la usuaria es genérico a propósito, pero el detalle
+    // queda en los logs del servidor: sin esto, un fallo de almacenamiento es
+    // imposible de diagnosticar.
+    console.error("[blob] falló la subida", prefijo, e);
     return { message: "No se pudo subir la imagen. Probá de nuevo en un momento." };
   }
 }
 
 /* ── Fotos de las profesionales ─────────────────────────────────────── */
 
+/**
+ * La profesional, si este usuario puede tocar su ficha.
+ *
+ * La administración llega a cualquiera; cada profesional, solo a la suya. El
+ * alcance va en el WHERE, así un id ajeno no devuelve nada en lugar de tener
+ * que comparar a mano de quién es la fila.
+ */
+async function profesionalDeUsuario(user: AdminUser, professionalId: number) {
+  const [profesional] = await db
+    .select()
+    .from(professionals)
+    .where(withScope(user, professionals.id, eq(professionals.id, professionalId)))
+    .limit(1);
+
+  return profesional ?? null;
+}
+
 export async function uploadProfessionalPhoto(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const professionalId = Number(formData.get("professionalId"));
   if (!professionalId) return error("Profesional no encontrada.");
 
-  const [professional] = await db
-    .select()
-    .from(professionals)
-    .where(eq(professionals.id, professionalId))
-    .limit(1);
-
+  const professional = await profesionalDeUsuario(user, professionalId);
   if (!professional) return error("Profesional no encontrada.");
 
   const resultado = await subirImagen(
@@ -132,6 +149,7 @@ export async function uploadProfessionalPhoto(
 
   revalidatePath("/");
   revalidatePath("/admin/profesionales");
+  revalidatePath("/admin/perfil");
 
   return { ok: true, message: "Foto actualizada." };
 }
@@ -140,17 +158,12 @@ export async function removeProfessionalPhoto(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const professionalId = Number(formData.get("professionalId"));
   if (!professionalId) return error("Profesional no encontrada.");
 
-  const [professional] = await db
-    .select()
-    .from(professionals)
-    .where(eq(professionals.id, professionalId))
-    .limit(1);
-
+  const professional = await profesionalDeUsuario(user, professionalId);
   if (!professional) return error("Profesional no encontrada.");
 
   await db
@@ -166,8 +179,97 @@ export async function removeProfessionalPhoto(
 
   revalidatePath("/");
   revalidatePath("/admin/profesionales");
+  revalidatePath("/admin/perfil");
 
   return { ok: true, message: "Foto quitada. Se muestran las iniciales." };
+}
+
+/* ── Fotos de los servicios ─────────────────────────────────────────── */
+
+/**
+ * El servicio, si este usuario puede tocarlo.
+ *
+ * A diferencia de las fotos de las profesionales, estas no son cosa exclusiva
+ * de la administración: cada profesional carga las de sus propios servicios. El
+ * alcance va en el WHERE, así un id ajeno no devuelve nada en lugar de tener
+ * que comparar a mano de quién es la fila.
+ */
+async function servicioDeUsuario(user: AdminUser, serviceId: number) {
+  const [servicio] = await db
+    .select()
+    .from(services)
+    .where(withScope(user, services.professionalId, eq(services.id, serviceId)))
+    .limit(1);
+
+  return servicio ?? null;
+}
+
+export async function uploadServicePhoto(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const serviceId = Number(formData.get("serviceId"));
+  if (!serviceId) return error("Servicio no encontrado.");
+
+  const servicio = await servicioDeUsuario(user, serviceId);
+  if (!servicio) return error("Servicio no encontrado.");
+
+  const resultado = await subirImagen(
+    formData.get("photo"),
+    `servicios/${serviceId}`,
+  );
+
+  if ("message" in resultado) return error(resultado.message);
+
+  const anterior = servicio.photoUrl;
+
+  await db
+    .update(services)
+    .set({
+      photoUrl: resultado.url,
+      // La primera foto enciende sola el recuadro: subirla es justamente pedir
+      // que se vea. Si ya había una, se respeta el estado del check.
+      showPhoto: servicio.photoUrl ? servicio.showPhoto : true,
+    })
+    .where(eq(services.id, serviceId));
+
+  if (esNuestro(anterior)) await del(anterior).catch(() => undefined);
+
+  revalidatePath("/");
+  revalidatePath("/admin/servicios");
+
+  return { ok: true, message: "Foto actualizada." };
+}
+
+export async function removeServicePhoto(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const serviceId = Number(formData.get("serviceId"));
+  if (!serviceId) return error("Servicio no encontrado.");
+
+  const servicio = await servicioDeUsuario(user, serviceId);
+  if (!servicio) return error("Servicio no encontrado.");
+
+  // El check se apaga junto con la foto: si no, volver a subir una la
+  // publicaría de entrada sin que nadie lo pidiera.
+  await db
+    .update(services)
+    .set({ photoUrl: null, showPhoto: false })
+    .where(eq(services.id, serviceId));
+
+  if (esNuestro(servicio.photoUrl)) {
+    await del(servicio.photoUrl).catch(() => undefined);
+  }
+
+  revalidatePath("/");
+  revalidatePath("/admin/servicios");
+
+  return { ok: true, message: "Foto quitada. Queda solo la explicación." };
 }
 
 /* ── Logo del negocio ───────────────────────────────────────────────── */
@@ -176,7 +278,7 @@ export async function uploadLogo(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const resultado = await subirImagen(formData.get("photo"), "logo");
   if ("message" in resultado) return error(resultado.message);
@@ -198,7 +300,7 @@ export async function removeLogo(
   _prev: ActionState,
   _formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const { business_logo_url: anterior } = await getSettings();
 

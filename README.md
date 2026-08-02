@@ -18,8 +18,20 @@ npm install
 npm run db:seed
 ```
 
-Ese comando crea la base y **muestra por pantalla las contraseñas de los dos
-usuarios del panel**. Anotalas: no se vuelven a mostrar. Después:
+Ese comando crea la base y **muestra por pantalla las contraseñas de los tres
+usuarios del panel** (`admin`, `profesional1` y `profesional2`). Anotalas: no
+se vuelven a mostrar.
+
+Si preferís elegirlas vos, ponelas antes en el `.env`:
+
+```
+ADMIN_PASSWORD=…      PROF1_PASSWORD=…      PROF2_PASSWORD=…
+ADMIN_EMAIL=…         PROF1_EMAIL=…         PROF2_EMAIL=…
+```
+
+Los emails son a donde le llega a cada profesional el aviso de turno nuevo y de
+cancelación. Si no los cargás ahí, se completan después desde **Usuarios**.
+Después:
 
 ```bash
 npm run dev
@@ -35,6 +47,8 @@ Y abrí http://localhost:3000
 | `npm run db:migrate` | Aplicar migraciones pendientes |
 | `npm run db:seed` | Carga inicial (usuarios + datos de ejemplo) |
 | `npm run db:seed -- --reset` | Vaciar todo y empezar de cero (pide confirmación) |
+| `npm run db:users` | Listar las cuentas del panel |
+| `npm run db:password -- <usuario>` | Ponerle una contraseña nueva a una cuenta |
 | `npm run db:studio` | Visor de la base en el navegador |
 
 En desarrollo la base es el archivo `data/turnos.db`. En producción es Turso;
@@ -49,9 +63,13 @@ no hay que cambiar código, solo variables de entorno.
 3. **Profesionales** — cargá los nombres, la foto y, sobre todo, **los
    servicios con su duración**. Sin al menos un servicio no se le pueden sacar
    turnos a esa profesional.
-4. **Horarios** — los días y las franjas en que atiende cada una.
+4. **Horarios** — los días y las franjas en que atiende cada una, y sus
+   vacaciones.
+5. **Usuarios** — revisá que cada cuenta `profesional` esté vinculada a la
+   profesional correcta y tenga su email de contacto cargado.
 
-Después de eso la página pública ya funciona.
+Después de eso la página pública ya funciona, y cada profesional puede entrar
+con su propio usuario a ver su agenda y manejar sus horarios.
 
 ### Sobre los servicios
 
@@ -62,6 +80,28 @@ La duración del turno sale del servicio. Cada profesional puede tener:
 
 Es el mismo lugar donde se cambia "cuánto dura un turno": se edita la duración
 del servicio.
+
+### Qué es cada servicio (la ficha al costado)
+
+En la web pública, cuando la clienta elige un servicio aparece una tarjeta al
+costado —debajo de la elección en el celular— que explica de qué se trata. Sirve
+para lo que no todo el mundo sabe qué es: kapping, esmaltado semipermanente,
+laminado de cejas.
+
+Se carga en **Servicios**, y ahí hay dos cosas por servicio:
+
+- **Qué es** — el texto, hasta 400 caracteres. Si queda vacío no aparece
+  ninguna ficha.
+- **Foto de ejemplo** — opcional, con un check *Mostrar la foto en la web*. Con
+  el check apagado la ficha sale igual, solo que sin el recuadro de la foto. Sin
+  foto cargada el check queda deshabilitado; al subir la primera se enciende
+  solo.
+
+Es la única pantalla de configuración que comparten los dos roles: **cada
+profesional escribe la de sus propios servicios y no puede tocar la de la otra**;
+la administración las ve todas, agrupadas por profesional. El nombre, la
+duración y el precio se siguen cargando en **Profesionales**, solo desde una
+cuenta `admin`.
 
 ### Vacaciones
 
@@ -81,10 +121,63 @@ fechas: revisalos en la agenda y avisales vos a las clientas.
 
 ### Usuarios y roles
 
-- `owner` — acceso total.
-- `staff` — solo la agenda de turnos; no puede tocar horarios ni ajustes.
+Todos entran por el mismo `/admin`, con su propio usuario y contraseña. Lo que
+ven después depende del rol:
 
-La carga inicial crea uno de cada uno (`admin` y `recepcion`).
+| Rol | Turnos | Horarios y vacaciones | Fichas de servicios | Profesionales, Usuarios y Ajustes |
+|---|---|---|---|---|
+| `admin` | de todas, con filtro por profesional | de todas | de todas | sí |
+| `profesional` | **solo los suyos** | **solo los suyos** | **solo los suyos** | no |
+
+Una cuenta `profesional` está atada a una fila de `professionals` por su campo
+`professional_id`. Ese vínculo es lo que define qué ve: sin él la cuenta no ve
+ningún turno.
+
+**El aislamiento se aplica en el servidor, no escondiendo botones.** Cada
+página y cada server action vuelve a resolver el alcance del usuario contra la
+base:
+
+- los ids que llegan por formulario se validan con `canAccessProfessional`;
+- los borrados y ediciones por id llevan la condición de alcance dentro del
+  `WHERE` (`withScope`), así un id ajeno no afecta ninguna fila;
+- la agenda ignora el parámetro `?prof=` cuando quien mira es una profesional.
+
+Editar la URL o falsificar el envío de un formulario no alcanza para ver ni
+tocar los datos de la otra.
+
+La carga inicial crea tres cuentas: `admin`, `profesional1` y `profesional2`,
+cada una vinculada a la suya. Desde **Usuarios**, y solo desde una cuenta
+`admin`, se puede:
+
+- crear cuentas nuevas y vincularlas a una profesional (por ejemplo, sumar una
+  tercera);
+- cambiarle a cualquiera el **nombre de usuario**, el nombre para mostrar, el
+  email, el rol y la profesional vinculada;
+- resetear contraseñas;
+- desactivar y reactivar cuentas.
+
+Desactivar corta las sesiones abiertas en el acto: el permiso se lee de la base
+en cada request, no de la cookie.
+
+Cada quien cambia su propia contraseña y su email de contacto en **Mi cuenta**.
+
+### Si nadie puede entrar al panel
+
+Las contraseñas **no se pueden consultar**: en la base solo está su hash
+bcrypt, que no se puede revertir. Lo único posible es poner una nueva. Desde la
+consola, contra la misma base que usa el sitio:
+
+```bash
+npm run db:users
+```
+
+```bash
+npm run db:password -- admin
+```
+
+El segundo comando genera una contraseña, la aplica y la muestra una única vez.
+Si querés elegirla vos, va como segundo argumento:
+`npm run db:password -- admin MiClave123`.
 
 ---
 
@@ -107,21 +200,50 @@ queda en la agenda marcado como cancelado.
 
 ---
 
-## Emails (desactivados)
+## Emails
 
-Está todo escrito pero apagado, porque requiere hosting y dominio propio.
-Mientras tanto el cliente recibe su link en la pantalla de confirmación, con un
-botón para copiarlo.
+Salen cuatro tipos de mail, todos por el mismo camino:
 
-Para activarlo más adelante:
+| Cuándo | A quién | Qué lleva |
+|---|---|---|
+| Se confirma un turno | al cliente | fecha, hora, quién atiende y su link personal |
+| El cliente cancela | al cliente | confirmación de la cancelación |
+| Se confirma un turno | **a la profesional** | el turno y los datos de contacto del cliente |
+| Se cancela un turno (cliente o panel) | **a la profesional** | qué horario se liberó y quién lo canceló |
 
-1. Crear cuenta en [Resend](https://resend.com). El plan gratuito da 3.000
-   emails por mes, de sobra para este uso.
+Los avisos a la profesional van al **email de contacto de su cuenta del panel**
+(el de **Mi cuenta**, o el que le cargue el admin en **Usuarios**). No hay una
+segunda lista de direcciones que mantener: si el email de la cuenta está vacío,
+no recibe avisos. Si hay más de una cuenta vinculada a la misma profesional, le
+llega a todas.
+
+Los mails salen por [Resend](https://resend.com). Vienen apagados: hay que
+encenderlos una sola vez. El interruptor de Ajustes es uno solo y cubre tanto
+los del cliente como los de las profesionales.
+
+1. Crear cuenta en Resend. El plan gratuito da 3.000 emails por mes, de sobra
+   para este uso.
 2. Verificar el dominio agregando los registros DNS que indica el panel de
-   Resend. **Sin dominio propio verificado solo se pueden enviar mails a la
-   casilla del titular de la cuenta.**
-3. Poner `RESEND_API_KEY` en el archivo `.env`.
-4. En Ajustes: cargar la dirección remitente y tildar el envío de emails.
+   Resend. **Sin dominio propio verificado solo se puede enviar a la casilla
+   del titular de la cuenta**, usando `onboarding@resend.dev` como remitente.
+   Sirve para probar, no para producción.
+3. Cargar `RESEND_API_KEY` donde corra el sitio: en el archivo `.env` para
+   desarrollo, y en Vercel → Settings → Environment Variables para producción.
+   Después de agregarla en Vercel hay que volver a desplegar.
+4. En **Ajustes → Emails de confirmación**: poner la dirección remitente
+   (tiene que ser del dominio verificado) y tildar el envío. Guardar.
+5. En **Ajustes → Probar el envío**: mandarte un mail de prueba a vos. Si llega,
+   está todo bien; si no, la pantalla dice qué contestó Resend.
+
+Conviene también cargar `APP_URL` con la dirección definitiva del sitio, para
+que el link del mail salga siempre con el dominio bueno y no con el
+`.vercel.app`. Sin `APP_URL` el link se arma con el dominio por el que entró
+esa persona, que funciona igual pero puede no ser el que querés mostrar.
+
+**Un mail que no sale nunca invalida un turno.** El turno se guarda primero y
+el cliente ve su link en la pantalla de confirmación, con un botón para
+copiarlo. Si el envío falla queda anotado el motivo en los logs del servidor
+(en Vercel: pestaña Logs, buscar `[resend]`).
 
 ---
 
@@ -131,6 +253,7 @@ Las imágenes se suben desde el panel y aparecen al instante, sin volver a
 publicar el proyecto. Se pueden cambiar desde la computadora o el celular.
 
 - **Fotos de las profesionales:** Profesionales → Foto y datos → Subir foto.
+- **Fotos de los servicios:** Servicios → Foto de ejemplo → Subir foto.
 - **Logo del negocio:** Ajustes → Logo → Subir logo.
 
 No van en la carpeta `public/`: eso es parte del código, así que cada foto
@@ -139,7 +262,11 @@ nueva obligaría a hacer un despliegue.
 ### Configurarlo una sola vez
 
 1. En Vercel, entrá a tu proyecto → pestaña **Storage** → **Create** → **Blob**.
-2. Ponele un nombre (por ejemplo `moksha-fotos`) y creá el almacén.
+2. Ponele un nombre (por ejemplo `moksha-fotos`) y elegí acceso **público**
+   (*public*). Esto es importante y no se puede cambiar después: las fotos se
+   muestran en la web, así que en un almacén privado la subida falla con
+   «No se pudo subir la imagen». Si te equivocaste, creá otro almacén público,
+   conectalo y borrá el privado.
 3. **Connect to Project** → elegí el proyecto y los tres entornos (Production,
    Preview y Development). Vercel agrega las variables solo, no hay que copiar
    nada a mano.
@@ -247,6 +374,7 @@ cargá estas variables de entorno en el panel de Vercel:
 | `TURSO_AUTH_TOKEN` | El token de Turso |
 | `APP_URL` | La dirección final del sitio |
 | `BLOB_STORE_ID` o `BLOB_READ_WRITE_TOKEN` | Las agrega Vercel sola al conectar el almacén de fotos |
+| `RESEND_API_KEY` | Solo si querés los emails de confirmación |
 
 Vercel compila y publica solo. El HTTPS y el certificado vienen incluidos, y
 hacen falta: sin ellos no funcionan ni la cookie de sesión del panel ni el
@@ -311,9 +439,10 @@ src/
     availability.ts          ← cálculo de horarios libres (el núcleo)
     dates.ts                 fechas y horas en la zona del negocio
     settings.ts              configuración del negocio
-    auth.ts / session.ts     login del panel
+    auth.ts / session.ts     ← login, roles y alcance por profesional
+    notify.ts                avisos por email a la profesional
     tokens.ts                tokens de cancelación
-  proxy.ts                   protege /admin
+  proxy.ts                   protege /admin (primera capa, por rol)
 scripts/migrate.ts           aplica migraciones
 scripts/seed.ts              carga inicial
 ```
@@ -329,6 +458,13 @@ fantasma.
 la medianoche**, en la zona horaria del negocio. No se usan timestamps UTC a
 propósito: evita los errores de desplazamiento que aparecen al convertir de una
 zona a otra.
+
+**Los permisos se leen de la base en cada request, no de la cookie.** La cookie
+firmada dice *quién* es; `getCurrentUser` dice *qué puede hacer*. Por eso
+desactivar una cuenta o cambiarle el rol tiene efecto en el acto en vez de
+cuando vence la sesión. El middleware (`proxy.ts`) solo mira la firma del
+token, porque corre en el borde y no tiene acceso a la base: es una primera
+capa barata, nunca la que decide.
 
 ### Cómo se evitan las reservas dobles
 

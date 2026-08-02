@@ -51,6 +51,17 @@ export const services = sqliteTable(
     price: real("price"),
     active: integer("active", { mode: "boolean" }).notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
+    /**
+     * Qué es el servicio, en las palabras del negocio. Se muestra en una ficha
+     * al costado del flujo de reserva cuando el cliente lo elige.
+     */
+    description: text("description").notNull().default(""),
+    photoUrl: text("photo_url"),
+    /**
+     * El interruptor de la foto, aparte de la foto misma: sin él, la única
+     * manera de dejar de mostrarla sería borrarla y volver a subirla.
+     */
+    showPhoto: integer("show_photo", { mode: "boolean" }).notNull().default(false),
   },
   (t) => [index("services_professional_idx").on(t.professionalId)],
 );
@@ -150,20 +161,43 @@ export const appointments = sqliteTable(
   ],
 );
 
-export const adminUsers = sqliteTable("admin_users", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  username: text("username").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
-  displayName: text("display_name").notNull().default(""),
-  /** owner: acceso total. staff: solo la agenda de turnos. */
-  role: text("role", { enum: ["owner", "staff"] })
-    .notNull()
-    .default("owner"),
-  createdAt: integer("created_at")
-    .notNull()
-    .default(sql`(unixepoch())`),
-  lastLoginAt: integer("last_login_at"),
-});
+/**
+ * Cuentas del panel.
+ *
+ * El par (role, professionalId) es lo que define qué ve cada una:
+ *   · admin       → professionalId NULL, ve y gestiona todo.
+ *   · profesional → professionalId apunta a una fila de `professionals`, y solo
+ *                   ve los turnos, horarios y vacaciones de esa profesional.
+ *
+ * El rol por defecto es el más limitado a propósito: una fila insertada a mano
+ * sin especificarlo no queda con acceso total por descuido.
+ */
+export const adminUsers = sqliteTable(
+  "admin_users",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    username: text("username").notNull().unique(),
+    passwordHash: text("password_hash").notNull(),
+    displayName: text("display_name").notNull().default(""),
+    role: text("role", { enum: ["admin", "profesional"] })
+      .notNull()
+      .default("profesional"),
+    /** NULL en las cuentas de administración: no están atadas a ninguna. */
+    professionalId: integer("professional_id").references(() => professionals.id),
+    /**
+     * Dirección de contacto de la cuenta. Recibe los avisos de turno nuevo y de
+     * cancelación, y queda lista para la recuperación de contraseña.
+     */
+    email: text("email").notNull().default(""),
+    /** Baja lógica: la cuenta no puede entrar pero su historial se conserva. */
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at")
+      .notNull()
+      .default(sql`(unixepoch())`),
+    lastLoginAt: integer("last_login_at"),
+  },
+  (t) => [index("admin_users_professional_idx").on(t.professionalId)],
+);
 
 /** Configuración clave/valor. Todo lo que distingue a un negocio de otro. */
 export const settings = sqliteTable("settings", {
