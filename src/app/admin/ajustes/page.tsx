@@ -137,8 +137,14 @@ export default async function SettingsPage() {
                 name="contact_address"
                 className="input"
                 defaultValue={settings.contact_address}
+                placeholder="Av. Siempre Viva 742, Buenos Aires"
                 maxLength={120}
               />
+              <p className="mt-1 text-xs text-ink-muted">
+                Con esto se arma el mapa que ve la clienta al confirmar el
+                turno. Escribila como la buscarías en Google Maps (calle,
+                número y ciudad). Si queda vacía no aparece ningún mapa.
+              </p>
             </div>
           </div>
         </section>

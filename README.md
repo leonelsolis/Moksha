@@ -198,6 +198,20 @@ ese límite.
 Cancelar **libera el horario al instante** y no borra el registro: el turno
 queda en la agenda marcado como cancelado.
 
+### Cómo llegar al local (el mapa al costado)
+
+En la pantalla del turno —la de la confirmación y la misma que la clienta vuelve
+a abrir después— aparece al costado un mapa de Google con la dirección del
+local, y un botón **Cómo llegar** que en el celular abre la app de Maps. Debajo
+del mapa, en pantallas angostas.
+
+Sale de la **Dirección** de Ajustes: escribila como la buscarías en Google Maps
+(calle, número y ciudad). Si queda vacía no hay mapa ni columna al costado, y la
+página se ve igual que antes. En un turno cancelado tampoco se muestra.
+
+Es el embed público de Google: **no hace falta ninguna clave de API** ni dar de
+alta nada en Google Cloud, y por eso tampoco se puede personalizar el mapa.
+
 ---
 
 ## Emails

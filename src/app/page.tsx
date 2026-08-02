@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { BookingFlow } from "@/components/public/BookingFlow";
@@ -6,6 +7,8 @@ import { bookingWindow, getPublicProfessionals } from "@/lib/availability";
 import { nowInTz } from "@/lib/dates";
 import { hasServiceInfo, type PublicProfessionalView } from "@/lib/public-types";
 import { getSettings, settingInt } from "@/lib/settings";
+import { staticSiteOrigin } from "@/lib/site-url";
+import { businessDescription, businessJsonLd } from "@/lib/structured-data";
 
 /**
  * Página pública de reserva.
@@ -14,6 +17,42 @@ import { getSettings, settingInt } from "@/lib/settings";
  * cada turno que se toma o se cancela.
  */
 export const dynamic = "force-dynamic";
+
+/**
+ * Lo que se ve en el resultado de Google y al compartir el link.
+ *
+ * La descripción no está escrita a mano: se arma con los rubros que hay
+ * cargados y la dirección del negocio, así acompaña sola a lo que ofrece el
+ * local sin que nadie tenga que acordarse de actualizarla.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const settings = await getSettings();
+  const today = nowInTz(settings.timezone).date;
+  const professionals = await getPublicProfessionals(today);
+
+  const specialties = [
+    ...new Set(
+      professionals
+        .map((item) => item.professional.specialty.trim())
+        .filter(Boolean),
+    ),
+  ];
+
+  const description = businessDescription({
+    settings,
+    specialties,
+    address: settings.contact_address.trim(),
+  });
+
+  const origin = staticSiteOrigin();
+
+  return {
+    description,
+    alternates: origin ? { canonical: "/" } : undefined,
+    openGraph: { description, ...(origin ? { url: origin } : {}) },
+    twitter: { description },
+  };
+}
 
 export default async function HomePage() {
   const settings = await getSettings();
@@ -52,8 +91,36 @@ export default async function HomePage() {
    */
   const wide = views.some((item) => item.services.some(hasServiceInfo));
 
+  /*
+   * Ficha del negocio para los buscadores. Se arma con lo que ya está cargado
+   * en el panel; si falta un dato, sale sin esa propiedad.
+   */
+  const jsonLd = businessJsonLd({
+    settings,
+    origin: staticSiteOrigin(),
+    specialties: [
+      ...new Set(views.map((v) => v.specialty.trim()).filter(Boolean)),
+    ],
+    services: [
+      ...new Set(views.flatMap((v) => v.services.map((s) => s.name.trim()))),
+    ].filter(Boolean),
+    image:
+      settings.business_logo_url.trim() ||
+      views.find((v) => v.photoUrl)?.photoUrl ||
+      null,
+  });
+
   return (
     <>
+      {/*
+        Va en el HTML que llega de entrada, no inyectado después: el robot de
+        Google lee la primera respuesta y no siempre ejecuta el JavaScript.
+      */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+
       <SiteHeader settings={settings} />
 
       {/*
