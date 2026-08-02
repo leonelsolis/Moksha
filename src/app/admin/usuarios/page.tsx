@@ -174,6 +174,26 @@ export default async function UsersPage() {
 
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
+                    <label className="field-label" htmlFor={`username-${user.id}`}>
+                      Usuario para entrar
+                    </label>
+                    <input
+                      id={`username-${user.id}`}
+                      name="username"
+                      className="input"
+                      defaultValue={user.username}
+                      required
+                      pattern="[A-Za-z0-9._-]{3,30}"
+                      maxLength={30}
+                      autoComplete="off"
+                    />
+                    <p className="mt-1 text-xs text-ink-muted">
+                      Sin espacios ni acentos. Si lo cambiás, avisale: es con lo
+                      que entra al panel.
+                    </p>
+                  </div>
+
+                  <div>
                     <label className="field-label" htmlFor={`display-${user.id}`}>
                       Nombre para mostrar
                     </label>
@@ -268,7 +288,7 @@ export default async function UsersPage() {
                 <span>
                   Resetear contraseña
                   <span className="ml-2 text-xs text-ink-muted">
-                    {formatLastLogin(user.lastLoginAt)}
+                    sin saber la anterior · {formatLastLogin(user.lastLoginAt)}
                   </span>
                 </span>
                 <Icon
@@ -306,8 +326,10 @@ export default async function UsersPage() {
                 </div>
 
                 <p className="mt-2 text-xs text-ink-muted">
-                  La contraseña se muestra una sola vez al generarla. Después
-                  solo se puede volver a resetear.
+                  No hace falta la contraseña actual: se pisa por la nueva. La
+                  contraseña se muestra una sola vez, así que anotala y pasásela
+                  antes de cerrar la pantalla. Las contraseñas se guardan
+                  cifradas y no se pueden consultar, solo reemplazar.
                 </p>
               </ActionForm>
             </details>
@@ -342,7 +364,7 @@ export default async function UsersPage() {
                 autoComplete="off"
               />
               <p className="mt-1 text-xs text-ink-muted">
-                Sin espacios ni acentos. No se puede cambiar después.
+                Sin espacios ni acentos. Se puede cambiar después.
               </p>
             </div>
 

@@ -18,8 +18,20 @@ npm install
 npm run db:seed
 ```
 
-Ese comando crea la base y **muestra por pantalla las contraseñas de los dos
-usuarios del panel**. Anotalas: no se vuelven a mostrar. Después:
+Ese comando crea la base y **muestra por pantalla las contraseñas de los tres
+usuarios del panel** (`admin`, `profesional1` y `profesional2`). Anotalas: no
+se vuelven a mostrar.
+
+Si preferís elegirlas vos, ponelas antes en el `.env`:
+
+```
+ADMIN_PASSWORD=…      PROF1_PASSWORD=…      PROF2_PASSWORD=…
+ADMIN_EMAIL=…         PROF1_EMAIL=…         PROF2_EMAIL=…
+```
+
+Los emails son a donde le llega a cada profesional el aviso de turno nuevo y de
+cancelación. Si no los cargás ahí, se completan después desde **Usuarios**.
+Después:
 
 ```bash
 npm run dev
@@ -35,6 +47,8 @@ Y abrí http://localhost:3000
 | `npm run db:migrate` | Aplicar migraciones pendientes |
 | `npm run db:seed` | Carga inicial (usuarios + datos de ejemplo) |
 | `npm run db:seed -- --reset` | Vaciar todo y empezar de cero (pide confirmación) |
+| `npm run db:users` | Listar las cuentas del panel |
+| `npm run db:password -- <usuario>` | Ponerle una contraseña nueva a una cuenta |
 | `npm run db:studio` | Visor de la base en el navegador |
 
 En desarrollo la base es el archivo `data/turnos.db`. En producción es Turso;
@@ -49,9 +63,13 @@ no hay que cambiar código, solo variables de entorno.
 3. **Profesionales** — cargá los nombres, la foto y, sobre todo, **los
    servicios con su duración**. Sin al menos un servicio no se le pueden sacar
    turnos a esa profesional.
-4. **Horarios** — los días y las franjas en que atiende cada una.
+4. **Horarios** — los días y las franjas en que atiende cada una, y sus
+   vacaciones.
+5. **Usuarios** — revisá que cada cuenta `profesional` esté vinculada a la
+   profesional correcta y tenga su email de contacto cargado.
 
-Después de eso la página pública ya funciona.
+Después de eso la página pública ya funciona, y cada profesional puede entrar
+con su propio usuario a ver su agenda y manejar sus horarios.
 
 ### Sobre los servicios
 
@@ -81,10 +99,63 @@ fechas: revisalos en la agenda y avisales vos a las clientas.
 
 ### Usuarios y roles
 
-- `owner` — acceso total.
-- `staff` — solo la agenda de turnos; no puede tocar horarios ni ajustes.
+Todos entran por el mismo `/admin`, con su propio usuario y contraseña. Lo que
+ven después depende del rol:
 
-La carga inicial crea uno de cada uno (`admin` y `recepcion`).
+| Rol | Turnos | Horarios y vacaciones | Profesionales, Usuarios y Ajustes |
+|---|---|---|---|
+| `admin` | de todas, con filtro por profesional | de todas | sí |
+| `profesional` | **solo los suyos** | **solo los suyos** | no |
+
+Una cuenta `profesional` está atada a una fila de `professionals` por su campo
+`professional_id`. Ese vínculo es lo que define qué ve: sin él la cuenta no ve
+ningún turno.
+
+**El aislamiento se aplica en el servidor, no escondiendo botones.** Cada
+página y cada server action vuelve a resolver el alcance del usuario contra la
+base:
+
+- los ids que llegan por formulario se validan con `canAccessProfessional`;
+- los borrados y ediciones por id llevan la condición de alcance dentro del
+  `WHERE` (`withScope`), así un id ajeno no afecta ninguna fila;
+- la agenda ignora el parámetro `?prof=` cuando quien mira es una profesional.
+
+Editar la URL o falsificar el envío de un formulario no alcanza para ver ni
+tocar los datos de la otra.
+
+La carga inicial crea tres cuentas: `admin`, `profesional1` y `profesional2`,
+cada una vinculada a la suya. Desde **Usuarios**, y solo desde una cuenta
+`admin`, se puede:
+
+- crear cuentas nuevas y vincularlas a una profesional (por ejemplo, sumar una
+  tercera);
+- cambiarle a cualquiera el **nombre de usuario**, el nombre para mostrar, el
+  email, el rol y la profesional vinculada;
+- resetear contraseñas;
+- desactivar y reactivar cuentas.
+
+Desactivar corta las sesiones abiertas en el acto: el permiso se lee de la base
+en cada request, no de la cookie.
+
+Cada quien cambia su propia contraseña y su email de contacto en **Mi cuenta**.
+
+### Si nadie puede entrar al panel
+
+Las contraseñas **no se pueden consultar**: en la base solo está su hash
+bcrypt, que no se puede revertir. Lo único posible es poner una nueva. Desde la
+consola, contra la misma base que usa el sitio:
+
+```bash
+npm run db:users
+```
+
+```bash
+npm run db:password -- admin
+```
+
+El segundo comando genera una contraseña, la aplica y la muestra una única vez.
+Si querés elegirla vos, va como segundo argumento:
+`npm run db:password -- admin MiClave123`.
 
 ---
 
@@ -109,12 +180,24 @@ queda en la agenda marcado como cancelado.
 
 ## Emails
 
-Al confirmar un turno le llega un mail al cliente con la fecha, la hora, quién
-lo atiende y su link personal para verlo o cancelarlo. También le llega uno
-cuando cancela.
+Salen cuatro tipos de mail, todos por el mismo camino:
+
+| Cuándo | A quién | Qué lleva |
+|---|---|---|
+| Se confirma un turno | al cliente | fecha, hora, quién atiende y su link personal |
+| El cliente cancela | al cliente | confirmación de la cancelación |
+| Se confirma un turno | **a la profesional** | el turno y los datos de contacto del cliente |
+| Se cancela un turno (cliente o panel) | **a la profesional** | qué horario se liberó y quién lo canceló |
+
+Los avisos a la profesional van al **email de contacto de su cuenta del panel**
+(el de **Mi cuenta**, o el que le cargue el admin en **Usuarios**). No hay una
+segunda lista de direcciones que mantener: si el email de la cuenta está vacío,
+no recibe avisos. Si hay más de una cuenta vinculada a la misma profesional, le
+llega a todas.
 
 Los mails salen por [Resend](https://resend.com). Vienen apagados: hay que
-encenderlos una sola vez.
+encenderlos una sola vez. El interruptor de Ajustes es uno solo y cubre tanto
+los del cliente como los de las profesionales.
 
 1. Crear cuenta en Resend. El plan gratuito da 3.000 emails por mes, de sobra
    para este uso.
@@ -333,9 +416,10 @@ src/
     availability.ts          ← cálculo de horarios libres (el núcleo)
     dates.ts                 fechas y horas en la zona del negocio
     settings.ts              configuración del negocio
-    auth.ts / session.ts     login del panel
+    auth.ts / session.ts     ← login, roles y alcance por profesional
+    notify.ts                avisos por email a la profesional
     tokens.ts                tokens de cancelación
-  proxy.ts                   protege /admin
+  proxy.ts                   protege /admin (primera capa, por rol)
 scripts/migrate.ts           aplica migraciones
 scripts/seed.ts              carga inicial
 ```
@@ -351,6 +435,13 @@ fantasma.
 la medianoche**, en la zona horaria del negocio. No se usan timestamps UTC a
 propósito: evita los errores de desplazamiento que aparecen al convertir de una
 zona a otra.
+
+**Los permisos se leen de la base en cada request, no de la cookie.** La cookie
+firmada dice *quién* es; `getCurrentUser` dice *qué puede hacer*. Por eso
+desactivar una cuenta o cambiarle el rol tiene efecto en el acto en vez de
+cuando vence la sesión. El middleware (`proxy.ts`) solo mira la firma del
+token, porque corre en el borde y no tiene acceso a la base: es una primera
+capa barata, nunca la que decide.
 
 ### Cómo se evitan las reservas dobles
 

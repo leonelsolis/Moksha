@@ -108,8 +108,19 @@ export const getCurrentUser = cache(async (): Promise<AdminUser | null> => {
 /** Para páginas y acciones del panel: corta la ejecución si no hay sesión. */
 export async function requireUser(): Promise<AdminUser> {
   const user = await getCurrentUser();
-  if (!user) redirect("/admin/login");
-  return user;
+  if (user) return user;
+
+  /*
+   * Hay un caso en el que la cookie sigue siendo válida pero el usuario ya no:
+   * lo desactivaron o le borraron la cuenta mientras tenía la sesión abierta.
+   *
+   * Mandarlo al login no alcanzaría. El middleware solo verifica la firma del
+   * token, daría esa cookie por buena y lo devolvería a /admin, que volvería a
+   * mandarlo al login: un rebote infinito. Hay que pasar antes por la ruta que
+   * borra la cookie.
+   */
+  const staleCookie = await getSession();
+  redirect(staleCookie ? "/admin/salir" : "/admin/login");
 }
 
 /** Para lo que solo toca la administración: profesionales, ajustes, usuarios. */

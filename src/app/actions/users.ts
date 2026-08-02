@@ -38,6 +38,18 @@ function error(message: string): ActionState {
 
 const MIN_PASSWORD = 8;
 
+/** Sin espacios ni acentos: es lo que se escribe en el login. */
+const USERNAME_PATTERN = /^[a-z0-9._-]{3,30}$/;
+
+const USERNAME_ERROR =
+  "El usuario debe tener entre 3 y 30 caracteres: letras, números, punto, guion o guion bajo.";
+
+function readUsername(value: FormDataEntryValue | null) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+}
+
 /** base64url sin caracteres ambiguos, para poder dictarla por teléfono. */
 function randomPassword() {
   return randomBytes(9).toString("base64url").replace(/[-_]/g, "x");
@@ -105,18 +117,12 @@ export async function createUser(
 ): Promise<ActionState> {
   await requireAdmin();
 
-  const username = String(formData.get("username") ?? "")
-    .trim()
-    .toLowerCase();
+  const username = readUsername(formData.get("username"));
   const displayName = String(formData.get("displayName") ?? "").trim();
   const email = normalizeEmail(String(formData.get("email") ?? ""));
   const typed = String(formData.get("password") ?? "");
 
-  if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
-    return error(
-      "El usuario debe tener entre 3 y 30 caracteres: letras, números, punto, guion o guion bajo.",
-    );
-  }
+  if (!USERNAME_PATTERN.test(username)) return error(USERNAME_ERROR);
 
   if (!displayName) return error("Poné un nombre para mostrar.");
 
@@ -174,9 +180,11 @@ export async function updateUser(
   const id = Number(formData.get("id"));
   if (!id) return error("Cuenta no encontrada.");
 
+  const username = readUsername(formData.get("username"));
   const displayName = String(formData.get("displayName") ?? "").trim();
   const email = normalizeEmail(String(formData.get("email") ?? ""));
 
+  if (!USERNAME_PATTERN.test(username)) return error(USERNAME_ERROR);
   if (!displayName) return error("Poné un nombre para mostrar.");
   if (!isValidEmail(email)) return error("Escribí un email de contacto válido.");
 
@@ -200,6 +208,17 @@ export async function updateUser(
 
   if (!current) return error("Cuenta no encontrada.");
 
+  // El usuario es la llave del login, así que dos cuentas no pueden compartirlo.
+  if (username !== current.username) {
+    const [taken] = await db
+      .select({ id: adminUsers.id })
+      .from(adminUsers)
+      .where(eq(adminUsers.username, username))
+      .limit(1);
+
+    if (taken) return error("Ya existe otra cuenta con ese usuario.");
+  }
+
   // Bajar de rol a la última administración activa dejaría el panel sin nadie
   // que pueda gestionarlo.
   if (
@@ -213,11 +232,16 @@ export async function updateUser(
 
   await db
     .update(adminUsers)
-    .set({ displayName, email, role, professionalId: link.professionalId })
+    .set({ username, displayName, email, role, professionalId: link.professionalId })
     .where(eq(adminUsers.id, id));
 
   refresh();
-  return ok("Cuenta actualizada.");
+
+  return ok(
+    username === current.username
+      ? "Cuenta actualizada."
+      : `Cuenta actualizada. A partir de ahora entra con el usuario ${username}.`,
+  );
 }
 
 /* ── Contraseña ─────────────────────────────────────────────────────── */

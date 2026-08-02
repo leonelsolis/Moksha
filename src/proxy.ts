@@ -27,6 +27,10 @@ export async function proxy(request: NextRequest) {
   const token = request.cookies.get(SESSION_COOKIE)?.value;
   const session = await verifySession(token);
 
+  // Borra la cookie de una cuenta que ya no puede entrar. Tiene que pasar
+  // siempre, con sesión o sin ella: es la salida del rebote.
+  if (pathname === "/admin/salir") return NextResponse.next();
+
   // Quien ya inició sesión no necesita volver a ver el login.
   if (pathname === "/admin/login") {
     if (session) {

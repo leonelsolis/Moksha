@@ -69,7 +69,6 @@ export default async function AdminLayout({
 
             <span className="mx-2 hidden text-sm text-ink-muted sm:inline">
               {account.displayName || account.username}
-              {account.role === "admin" ? " · Administración" : null}
             </span>
 
             <form action={logout}>

@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
+    "db:users": "tsx scripts/password.ts",
+    "db:password": "tsx scripts/password.ts",
     "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
