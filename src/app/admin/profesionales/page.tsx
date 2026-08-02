@@ -11,6 +11,7 @@ import {
 } from "@/app/actions/admin";
 import { Icon } from "@/components/Icon";
 import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
+import { PhotoUpload } from "@/components/admin/PhotoUpload";
 import { db } from "@/db";
 import { professionals, services, vacations } from "@/db/schema";
 import { requireOwner } from "@/lib/auth";
@@ -131,14 +132,24 @@ export default async function ProfessionalsPage() {
             {/* ── Datos ─────────────────────────────────────────────── */}
             <details className="group border-b border-line">
               <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm text-ink-soft hover:bg-surface-sunken">
-                Datos y foto
+                Foto y datos
                 <Icon
                   name="chevronDown"
                   className="size-4 transition-transform group-open:rotate-180"
                 />
               </summary>
 
-              <ActionForm action={saveProfessional} className="space-y-3 px-4 pb-4">
+              {/* Va fuera del formulario de datos: la foto se sube y se quita
+                  por su cuenta, sin tocar el resto de la ficha. */}
+              <div className="border-b border-line px-4 pb-4">
+                <PhotoUpload
+                  professionalId={person.id}
+                  photoUrl={person.photoUrl}
+                  name={person.name}
+                />
+              </div>
+
+              <ActionForm action={saveProfessional} className="space-y-3 px-4 py-4">
                 <input type="hidden" name="id" value={person.id} />
 
                 <div className="grid gap-3 sm:grid-cols-2">
@@ -168,25 +179,6 @@ export default async function ProfessionalsPage() {
                       placeholder="Uñas"
                       maxLength={60}
                     />
-                  </div>
-
-                  <div className="sm:col-span-2">
-                    <label className="field-label" htmlFor={`photo-${person.id}`}>
-                      
-                    </label>
-                    <input
-                      id={`photo-${person.id}`}
-                      name="photoUrl"
-                      type="url"
-                      className="input"
-                      defaultValue={person.photoUrl ?? ""}
-                      placeholder="https://…"
-                    />
-                    <p className="mt-1 text-xs text-ink-muted">
-                      Si la dejás vacía se muestran las iniciales. Podés subir la
-                      foto a la carpeta <code>public/</code> y poner{" "}
-                      <code>/foto.jpg</code>.
-                    </p>
                   </div>
 
                   <div>

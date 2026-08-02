@@ -125,6 +125,44 @@ Para activarlo más adelante:
 
 ---
 
+## Fotos de las profesionales
+
+Las fotos se suben desde el panel (Profesionales → Foto y datos → Subir foto) y
+aparecen al instante, sin volver a publicar el proyecto. Las dueñas pueden
+cambiarlas solas desde el celular.
+
+No van en la carpeta `public/`: eso es parte del código, así que cada foto
+nueva obligaría a hacer un despliegue.
+
+### Configurarlo una sola vez
+
+1. En Vercel, entrá a tu proyecto → pestaña **Storage** → **Create** → **Blob**.
+2. Ponele un nombre (por ejemplo `moksha-fotos`) y creá el almacén.
+3. Conectalo al proyecto. Vercel agrega la variable `BLOB_READ_WRITE_TOKEN`
+   sola, no hay que copiar nada a mano.
+4. Volvé a desplegar para que la tome.
+
+Si querés subir fotos también desde tu computadora, traé la variable con:
+
+```bash
+npx vercel env pull .env.local
+```
+
+Sin esa variable el resto del sistema funciona igual: solo el botón de subir
+foto avisa que falta configurarlo, y se muestran las iniciales de cada
+profesional.
+
+### Qué hace con la imagen
+
+- La achica en el navegador a 800 píxeles de lado como máximo y la recomprime.
+  Una foto de celular de 4 MB queda en unos 150 KB, sin diferencia visible.
+- Respeta la orientación: las fotos verticales no salen acostadas.
+- Al reemplazar una foto, borra la anterior del almacenamiento.
+- Si la foto era un link externo cargado a mano, la quita de la ficha pero no
+  toca el original.
+
+---
+
 ## Variables de entorno
 
 Copiá `.env.example` a `.env`. La única obligatoria para desarrollo es
@@ -197,6 +235,7 @@ cargá estas variables de entorno en el panel de Vercel:
 | `TURSO_DATABASE_URL` | `libsql://…` |
 | `TURSO_AUTH_TOKEN` | El token de Turso |
 | `APP_URL` | La dirección final del sitio |
+| `BLOB_READ_WRITE_TOKEN` | La agrega Vercel sola al crear el almacén de fotos |
 
 Vercel compila y publica solo. El HTTPS y el certificado vienen incluidos, y
 hacen falta: sin ellos no funcionan ni la cookie de sesión del panel ni el

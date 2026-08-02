@@ -101,7 +101,6 @@ export async function saveProfessional(
   const id = Number(formData.get("id")) || null;
   const name = String(formData.get("name") ?? "").trim();
   const specialty = String(formData.get("specialty") ?? "").trim();
-  const photoUrl = String(formData.get("photoUrl") ?? "").trim();
   const bio = String(formData.get("bio") ?? "").trim();
   const sortOrder = Number(formData.get("sortOrder")) || 0;
   const active = formData.get("active") === "on";
@@ -111,11 +110,18 @@ export async function saveProfessional(
   const values = {
     name,
     specialty,
-    photoUrl: photoUrl || null,
     bio,
     sortOrder,
     active,
   };
+
+  /*
+   * La foto NO se toca acá.
+   *
+   * Tiene su propio formulario (subir y quitar), así que este no envía el
+   * campo. Si se incluyera de todos modos, guardar los datos lo dejaría vacío
+   * y borraría la foto sin que nadie lo pidiera.
+   */
 
   if (id) {
     await db.update(professionals).set(values).where(eq(professionals.id, id));

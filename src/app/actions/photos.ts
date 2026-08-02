@@ -1,0 +1,137 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { del, put } from "@vercel/blob";
+import { eq } from "drizzle-orm";
+
+import { db } from "@/db";
+import { professionals } from "@/db/schema";
+import type { ActionState } from "@/lib/action-state";
+import { requireOwner } from "@/lib/auth";
+
+/**
+ * Fotos de las profesionales.
+ *
+ * Se guardan en Vercel Blob y no en la carpeta `public/`. La diferencia es
+ * importante: `public/` es parte del código, así que agregar una foto ahí
+ * obliga a publicar el proyecto de nuevo. En Blob la foto aparece al instante
+ * y las dueñas pueden cambiarla solas desde el panel.
+ *
+ * El navegador achica la imagen antes de mandarla (ver PhotoUpload.tsx), así
+ * que lo que llega acá son unos cientos de kilobytes, no los varios megas que
+ * saca un celular.
+ */
+
+/** Tope de seguridad: el navegador ya achica, esto frena cualquier abuso. */
+const MAX_BYTES = 2 * 1024 * 1024;
+
+const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp"];
+
+function error(message: string): ActionState {
+  return { ok: false, message };
+}
+
+export async function uploadProfessionalPhoto(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireOwner();
+
+  const professionalId = Number(formData.get("professionalId"));
+  const file = formData.get("photo");
+
+  if (!professionalId) return error("Profesional no encontrada.");
+
+  if (!(file instanceof File) || file.size === 0) {
+    return error("Elegí una imagen para subir.");
+  }
+
+  if (!ALLOWED_TYPES.includes(file.type)) {
+    return error("El archivo tiene que ser una imagen JPG, PNG o WEBP.");
+  }
+
+  if (file.size > MAX_BYTES) {
+    return error("La imagen es demasiado grande. Probá con una más liviana.");
+  }
+
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    return error(
+      "Falta configurar el almacenamiento de fotos. Ver la sección de fotos en el README.",
+    );
+  }
+
+  const [professional] = await db
+    .select()
+    .from(professionals)
+    .where(eq(professionals.id, professionalId))
+    .limit(1);
+
+  if (!professional) return error("Profesional no encontrada.");
+
+  const anterior = professional.photoUrl;
+
+  try {
+    const extension = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+
+    const blob = await put(`profesionales/${professionalId}.${extension}`, file, {
+      access: "public",
+      contentType: file.type,
+      // Blob agrega un sufijo aleatorio al nombre. Se deja activado a
+      // propósito: si se reusara el mismo nombre, los navegadores y la caché
+      // de Vercel seguirían mostrando la foto vieja durante horas.
+      addRandomSuffix: true,
+    });
+
+    await db
+      .update(professionals)
+      .set({ photoUrl: blob.url })
+      .where(eq(professionals.id, professionalId));
+
+    // Recién ahora se borra la anterior: si algo falla antes, la profesional
+    // se queda con la foto vieja en lugar de quedarse sin ninguna.
+    if (anterior?.includes(".blob.vercel-storage.com")) {
+      await del(anterior).catch(() => undefined);
+    }
+  } catch {
+    return error("No se pudo subir la imagen. Probá de nuevo en un momento.");
+  }
+
+  revalidatePath("/");
+  revalidatePath("/admin/profesionales");
+
+  return { ok: true, message: "Foto actualizada." };
+}
+
+export async function removeProfessionalPhoto(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireOwner();
+
+  const professionalId = Number(formData.get("professionalId"));
+  if (!professionalId) return error("Profesional no encontrada.");
+
+  const [professional] = await db
+    .select()
+    .from(professionals)
+    .where(eq(professionals.id, professionalId))
+    .limit(1);
+
+  if (!professional) return error("Profesional no encontrada.");
+
+  await db
+    .update(professionals)
+    .set({ photoUrl: null })
+    .where(eq(professionals.id, professionalId));
+
+  // Solo se borra del almacenamiento lo que subimos nosotros. Si la foto era
+  // un link externo, se quita de la ficha pero no se toca el original.
+  if (professional.photoUrl?.includes(".blob.vercel-storage.com")) {
+    await del(professional.photoUrl).catch(() => undefined);
+  }
+
+  revalidatePath("/");
+  revalidatePath("/admin/profesionales");
+
+  return { ok: true, message: "Foto quitada. Se muestran las iniciales." };
+}
