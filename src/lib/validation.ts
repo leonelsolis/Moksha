@@ -43,6 +43,11 @@ export function normalizeName(value: string) {
   return value.trim().replace(/\s+/g, " ");
 }
 
+/** Espera una dirección ya normalizada. */
+export function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value) && value.length <= 200;
+}
+
 function validateName(value: string, label: string) {
   const name = normalizeName(value);
   if (!name) return `Ingresá tu ${label}.`;
@@ -76,7 +81,7 @@ export function validateCustomer(input: CustomerInput): {
   const email = normalizeEmail(input.email);
   if (!email) {
     errors.email = "Ingresá tu email.";
-  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) || email.length > 200) {
+  } else if (!isValidEmail(email)) {
     errors.email = "Revisá el email, no parece válido.";
   }
 

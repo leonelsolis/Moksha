@@ -6,9 +6,15 @@
  *
  * Es seguro correrlo dos veces: si ya hay datos, avisa y no toca nada.
  *
- * Las contraseñas salen de ADMIN_PASSWORD / STAFF_PASSWORD. Si no están, se
- * generan al azar y se imprimen una única vez por pantalla: no quedan
- * guardadas en ningún archivo.
+ * Crea tres cuentas: una de administración y una por profesional, cada una
+ * atada a la suya. Las contraseñas salen de estas variables de entorno:
+ *
+ *   ADMIN_PASSWORD    PROF1_PASSWORD    PROF2_PASSWORD
+ *
+ * La que falte se genera al azar y se imprime una única vez por pantalla: no
+ * queda guardada en ningún archivo. Los emails de contacto salen de
+ * ADMIN_EMAIL / PROF1_EMAIL / PROF2_EMAIL, y si faltan quedan vacíos para
+ * completarlos desde el panel (sin ellos no salen los avisos de turnos).
  */
 
 import { randomBytes } from "node:crypto";
@@ -97,29 +103,10 @@ async function main() {
    * base lo que se cambie desde el panel.
    */
 
-  /* ── Usuarios del panel ─────────────────────────────────────────── */
+  /* ── Profesionales ──────────────────────────────────────────────── */
 
-  const adminPassword = process.env.ADMIN_PASSWORD ?? randomPassword();
-  const staffPassword = process.env.STAFF_PASSWORD ?? randomPassword();
-
-  await db.insert(adminUsers).values([
-    {
-      username: "admin",
-      passwordHash: await hashPassword(adminPassword),
-      displayName: "Administración",
-      role: "owner",
-    },
-    {
-      // Segundo usuario para probar el rol limitado: ve la agenda pero no
-      // puede cambiar horarios ni ajustes.
-      username: "recepcion",
-      passwordHash: await hashPassword(staffPassword),
-      displayName: "Recepción",
-      role: "staff",
-    },
-  ]);
-
-  /* ── Datos de ejemplo ───────────────────────────────────────────── */
+  // Van antes que los usuarios: cada cuenta de profesional necesita el id de
+  // la fila a la que se vincula.
 
   const [first] = await db
     .insert(professionals)
@@ -140,6 +127,42 @@ async function main() {
       bio: "",
     })
     .returning();
+
+  /* ── Usuarios del panel ─────────────────────────────────────────── */
+
+  const adminPassword = process.env.ADMIN_PASSWORD ?? randomPassword();
+  const prof1Password = process.env.PROF1_PASSWORD ?? randomPassword();
+  const prof2Password = process.env.PROF2_PASSWORD ?? randomPassword();
+
+  await db.insert(adminUsers).values([
+    {
+      username: "admin",
+      passwordHash: await hashPassword(adminPassword),
+      displayName: "Administración",
+      email: process.env.ADMIN_EMAIL ?? "",
+      role: "admin",
+      // Sin vincular: la administración ve a todas.
+      professionalId: null,
+    },
+    {
+      username: "profesional1",
+      passwordHash: await hashPassword(prof1Password),
+      displayName: first.name,
+      email: process.env.PROF1_EMAIL ?? "",
+      role: "profesional",
+      professionalId: first.id,
+    },
+    {
+      username: "profesional2",
+      passwordHash: await hashPassword(prof2Password),
+      displayName: second.name,
+      email: process.env.PROF2_EMAIL ?? "",
+      role: "profesional",
+      professionalId: second.id,
+    },
+  ]);
+
+  /* ── Datos de ejemplo ───────────────────────────────────────────── */
 
   await db.insert(services).values([
     {
@@ -173,26 +196,48 @@ async function main() {
     ]),
   );
 
+  const missingEmails = [
+    process.env.ADMIN_EMAIL ? null : "admin",
+    process.env.PROF1_EMAIL ? null : "profesional1",
+    process.env.PROF2_EMAIL ? null : "profesional2",
+  ].filter(Boolean);
+
   console.log(`
   Listo. Datos iniciales cargados.
 
   ┌─ Usuarios del panel ──────────────────────────────
   │
-  │  Administración (acceso total)
+  │  Administración — ve y gestiona TODO
   │    usuario:     admin
   │    contraseña:  ${adminPassword}
+  │    email:       ${process.env.ADMIN_EMAIL ?? "(sin cargar)"}
   │
-  │  Recepción (solo ve la agenda)
-  │    usuario:     recepcion
-  │    contraseña:  ${staffPassword}
+  │  ${first.name} — solo su propia agenda
+  │    usuario:     profesional1
+  │    contraseña:  ${prof1Password}
+  │    email:       ${process.env.PROF1_EMAIL ?? "(sin cargar)"}
+  │
+  │  ${second.name} — solo su propia agenda
+  │    usuario:     profesional2
+  │    contraseña:  ${prof2Password}
+  │    email:       ${process.env.PROF2_EMAIL ?? "(sin cargar)"}
   │
   └───────────────────────────────────────────────────
 
   Anotá estas contraseñas ahora: no se vuelven a mostrar.
-  Cambialas desde Ajustes cuando entres.
-
+  Cada quien puede cambiar la suya desde /admin/cuenta, y el
+  admin puede resetear cualquiera desde /admin/usuarios.
+${
+  missingEmails.length > 0
+    ? `
+  Sin email de contacto: ${missingEmails.join(", ")}.
+  Cargalos en /admin/usuarios o no van a recibir los avisos
+  de turno nuevo y de cancelación.
+`
+    : ""
+}
   Se crearon dos profesionales de ejemplo con horarios de
-  lunes a viernes. Editalas en /admin/profesionales.
+  lunes a viernes. Editales el nombre en /admin/profesionales.
 `);
 }
 

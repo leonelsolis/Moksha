@@ -1,13 +1,11 @@
-import { asc, eq, gte } from "drizzle-orm";
+import Link from "next/link";
+import { asc } from "drizzle-orm";
 
 import {
-  addVacation,
   deleteService,
-  deleteVacation,
   saveProfessional,
   saveService,
   toggleProfessionalActive,
-  toggleVacation,
 } from "@/app/actions/admin";
 import {
   removeProfessionalPhoto,
@@ -17,17 +15,18 @@ import { Icon } from "@/components/Icon";
 import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
 import { ImageUpload } from "@/components/admin/ImageUpload";
 import { db } from "@/db";
-import { professionals, services, vacations } from "@/db/schema";
-import { requireOwner } from "@/lib/auth";
-import { formatDateLong, isWithin, nowInTz } from "@/lib/dates";
-import { getSettings } from "@/lib/settings";
+import { professionals, services } from "@/db/schema";
+import { requireAdmin } from "@/lib/auth";
 
 /**
- * Alta y edición de profesionales, sus servicios y sus vacaciones.
+ * Alta y edición de profesionales y de los servicios que ofrece cada una.
  *
  * Los servicios son los que definen cuánto dura cada turno: si una profesional
  * tiene uno solo, la web pública lo aplica sin preguntar nada; si tiene varios,
  * aparece un paso más donde el cliente elige.
+ *
+ * Los horarios y las vacaciones NO están acá: viven en Horarios, porque son lo
+ * único de la configuración que cada profesional gestiona por su cuenta.
  */
 
 export const dynamic = "force-dynamic";
@@ -35,22 +34,14 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Profesionales" };
 
 export default async function ProfessionalsPage() {
-  await requireOwner();
+  await requireAdmin();
 
-  const settings = await getSettings();
-  const today = nowInTz(settings.timezone).date;
-
-  const [staff, allServices, allVacations] = await Promise.all([
+  const [staff, allServices] = await Promise.all([
     db
       .select()
       .from(professionals)
       .orderBy(asc(professionals.sortOrder), asc(professionals.name)),
     db.select().from(services).orderBy(asc(services.sortOrder), asc(services.id)),
-    db
-      .select()
-      .from(vacations)
-      .where(gte(vacations.endDate, today))
-      .orderBy(asc(vacations.startDate)),
   ]);
 
   return (
@@ -58,19 +49,17 @@ export default async function ProfessionalsPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Profesionales</h1>
         <p className="mt-0.5 text-sm text-ink-soft">
-          Datos, servicios que ofrece cada una y períodos de vacaciones.
+          Datos y servicios que ofrece cada una. Los horarios y las vacaciones se
+          cargan en{" "}
+          <Link href="/admin/horarios" className="underline underline-offset-4">
+            Horarios
+          </Link>
+          .
         </p>
       </div>
 
       {staff.map((person) => {
         const ownServices = allServices.filter((s) => s.professionalId === person.id);
-        const ownVacations = allVacations.filter(
-          (v) => v.professionalId === person.id,
-        );
-        const currentVacation = ownVacations.find((v) =>
-          isWithin(today, v.startDate, v.endDate),
-        );
-        const isOnVacationNow = person.onVacation || Boolean(currentVacation);
 
         return (
           <section key={person.id} className="panel overflow-hidden">
@@ -82,7 +71,7 @@ export default async function ProfessionalsPage() {
                   <span className="text-sm text-ink-soft">{person.specialty}</span>
                 ) : null}
 
-                {isOnVacationNow ? (
+                {person.onVacation ? (
                   <span className="badge border-warning-line bg-warning-soft text-warning">
                     <Icon name="vacation" className="size-3" />
                     De vacaciones
@@ -98,19 +87,13 @@ export default async function ProfessionalsPage() {
               </div>
 
               <div className="flex flex-wrap gap-1.5">
-                {/* Interruptor inmediato, sin fechas. */}
-                <ActionForm action={toggleVacation} feedback="none">
-                  <input type="hidden" name="id" value={person.id} />
-                  <input
-                    type="hidden"
-                    name="onVacation"
-                    value={person.onVacation ? "false" : "true"}
-                  />
-                  <SubmitButton className="btn btn-secondary btn-sm" pendingLabel="…">
-                    <Icon name="vacation" className="size-3.5" />
-                    {person.onVacation ? "Volvió de vacaciones" : "Marcar de vacaciones"}
-                  </SubmitButton>
-                </ActionForm>
+                <Link
+                  href={`/admin/horarios?prof=${person.id}`}
+                  className="btn btn-secondary btn-sm"
+                >
+                  <Icon name="calendar" className="size-3.5" />
+                  Horarios y vacaciones
+                </Link>
 
                 <ActionForm action={toggleProfessionalActive} feedback="none">
                   <input type="hidden" name="id" value={person.id} />
@@ -129,7 +112,7 @@ export default async function ProfessionalsPage() {
             {person.onVacation ? (
               <p className="border-b border-line bg-warning-soft px-4 py-2 text-xs text-warning">
                 Está marcada de vacaciones sin fecha de vuelta. No se le pueden
-                sacar turnos hasta que la desmarques.
+                sacar turnos hasta que se desmarque desde Horarios.
               </p>
             ) : null}
 
@@ -222,7 +205,7 @@ export default async function ProfessionalsPage() {
             </details>
 
             {/* ── Servicios ─────────────────────────────────────────── */}
-            <details className="group border-b border-line" open={ownServices.length === 0}>
+            <details className="group" open={ownServices.length === 0}>
               <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm text-ink-soft hover:bg-surface-sunken">
                 <span>
                   Servicios y duración
@@ -377,115 +360,6 @@ export default async function ProfessionalsPage() {
                       Agregar
                     </SubmitButton>
                   </div>
-                </ActionForm>
-              </div>
-            </details>
-
-            {/* ── Vacaciones ────────────────────────────────────────── */}
-            <details className="group">
-              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm text-ink-soft hover:bg-surface-sunken">
-                <span>
-                  Vacaciones con fecha
-                  {ownVacations.length > 0 ? (
-                    <span className="ml-2 text-xs text-ink-muted">
-                      {ownVacations.length} programada
-                      {ownVacations.length === 1 ? "" : "s"}
-                    </span>
-                  ) : null}
-                </span>
-                <Icon
-                  name="chevronDown"
-                  className="size-4 transition-transform group-open:rotate-180"
-                />
-              </summary>
-
-              <div className="px-4 pb-4">
-                {ownVacations.length > 0 ? (
-                  <ul className="mb-3 divide-y divide-line rounded-sm border border-line">
-                    {ownVacations.map((row) => (
-                      <li
-                        key={row.id}
-                        className="flex flex-wrap items-center justify-between gap-2 p-2.5"
-                      >
-                        <span className="text-sm">
-                          <span className="first-letter:uppercase">{formatDateLong(row.startDate)}</span>
-                          <span className="text-ink-muted"> al </span>
-                          <span>{formatDateLong(row.endDate, true)}</span>
-                          {row.note ? (
-                            <span className="ml-2 text-xs text-ink-muted">{row.note}</span>
-                          ) : null}
-                          {isWithin(today, row.startDate, row.endDate) ? (
-                            <span className="badge ml-2 border-warning-line bg-warning-soft text-warning">
-                              En curso
-                            </span>
-                          ) : null}
-                        </span>
-
-                        <ActionForm action={deleteVacation} feedback="none">
-                          <input type="hidden" name="id" value={row.id} />
-                          <SubmitButton className="btn btn-ghost btn-sm" pendingLabel="…">
-                            <Icon name="trash" className="size-3.5" />
-                            <span className="sr-only">Eliminar período</span>
-                          </SubmitButton>
-                        </ActionForm>
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-
-                <ActionForm action={addVacation} resetOnSuccess>
-                  <input type="hidden" name="professionalId" value={person.id} />
-
-                  <div className="flex flex-wrap items-end gap-2">
-                    <div>
-                      <label className="field-label" htmlFor={`vac-start-${person.id}`}>
-                        Desde
-                      </label>
-                      <input
-                        id={`vac-start-${person.id}`}
-                        name="startDate"
-                        type="date"
-                        className="input"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="field-label" htmlFor={`vac-end-${person.id}`}>
-                        Hasta (inclusive)
-                      </label>
-                      <input
-                        id={`vac-end-${person.id}`}
-                        name="endDate"
-                        type="date"
-                        className="input"
-                        required
-                      />
-                    </div>
-
-                    <div className="min-w-40 flex-1">
-                      <label className="field-label" htmlFor={`vac-note-${person.id}`}>
-                        Nota
-                      </label>
-                      <input
-                        id={`vac-note-${person.id}`}
-                        name="note"
-                        className="input"
-                        placeholder="Opcional"
-                        maxLength={80}
-                      />
-                    </div>
-
-                    <SubmitButton className="btn btn-secondary">
-                      <Icon name="plus" className="size-3.5" />
-                      Agregar
-                    </SubmitButton>
-                  </div>
-
-                  <p className="mt-2 text-xs text-ink-muted">
-                    Los turnos ya reservados en esas fechas no se cancelan solos:
-                    revisalos en la agenda y avisales a las clientas.
-                  </p>
                 </ActionForm>
               </div>
             </details>

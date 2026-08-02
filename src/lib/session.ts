@@ -15,12 +15,29 @@ import { SignJWT, jwtVerify } from "jose";
 export const SESSION_COOKIE = "moksha_session";
 export const SESSION_MAX_AGE = 60 * 60 * 12; // 12 horas
 
+export const ROLES = ["admin", "profesional"] as const;
+
+export type Role = (typeof ROLES)[number];
+
 export type SessionPayload = {
   userId: number;
   username: string;
   displayName: string;
-  role: "owner" | "staff";
+  role: Role;
+  /**
+   * A qué profesional está atada la cuenta. NULL en las de administración.
+   *
+   * Viaja en el token solo para que el middleware pueda decidir sin consultar
+   * la base. Las páginas y las acciones NO se fían de este valor: vuelven a
+   * leer el usuario de la base, así un cambio de permisos tiene efecto en el
+   * acto y no cuando vence la cookie.
+   */
+  professionalId: number | null;
 };
+
+function toRole(value: unknown): Role | null {
+  return ROLES.includes(value as Role) ? (value as Role) : null;
+}
 
 const DEV_SECRET = "moksha-dev-secret-no-usar-en-produccion";
 
@@ -54,11 +71,20 @@ export async function verifySession(
   try {
     const { payload } = await jwtVerify(token, getSecret());
     if (typeof payload.userId !== "number") return null;
+
+    // Un rol desconocido (por ejemplo una cookie emitida antes de que
+    // existieran estos roles) invalida la sesión en vez de caer en un valor
+    // por defecto: adivinar acá sería adivinar permisos.
+    const role = toRole(payload.role);
+    if (!role) return null;
+
     return {
       userId: payload.userId,
       username: String(payload.username ?? ""),
       displayName: String(payload.displayName ?? ""),
-      role: payload.role === "staff" ? "staff" : "owner",
+      role,
+      professionalId:
+        typeof payload.professionalId === "number" ? payload.professionalId : null,
     };
   } catch {
     return null;

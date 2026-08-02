@@ -13,20 +13,39 @@ import {
   workingHours,
 } from "@/db/schema";
 import type { ActionState } from "@/lib/action-state";
-import { requireOwner, requireSession } from "@/lib/auth";
+import {
+  canAccessProfessional,
+  requireAdmin,
+  requireUser,
+  withScope,
+} from "@/lib/auth";
 import { isValidDateString, parseMinute } from "@/lib/dates";
+import { sendTestEmail } from "@/lib/email";
+import { notifyProfessionalCancellation } from "@/lib/notify";
 import { updateSettings, type SettingKey, type Settings } from "@/lib/settings";
+import { isValidEmail, normalizeEmail } from "@/lib/validation";
 
 /**
  * Acciones del panel.
  *
- * Todas empiezan pidiendo la sesión. El middleware ya bloquea /admin, pero un
+ * Todas empiezan pidiendo el usuario. El middleware ya bloquea /admin, pero un
  * server action es un endpoint HTTP propio: se puede invocar directamente sin
  * pasar por ninguna página, así que cada uno tiene que verificar por su cuenta.
  *
- * `requireOwner` se usa en lo que configura el negocio (profesionales,
- * horarios, ajustes). La agenda de turnos queda con `requireSession`, para que
- * un usuario 'staff' pueda trabajar sin poder cambiar la configuración.
+ * Hay dos niveles:
+ *
+ *   · `requireAdmin` en lo que define el negocio (profesionales, servicios,
+ *     ajustes). Nada de esto lo toca una profesional.
+ *
+ *   · `requireUser` + alcance en lo que es "de alguien": turnos, horarios,
+ *     excepciones y vacaciones. Acá no alcanza con estar logueada, porque una
+ *     profesional podría mandar el id de la otra en el formulario. Cada acción
+ *     comprueba de quién es la fila:
+ *       - si el id de la profesional viene en el formulario, se valida con
+ *         `canAccessProfessional`;
+ *       - si la acción borra o edita por id de fila, la condición de alcance se
+ *         agrega al WHERE con `withScope`, así un id ajeno no afecta ninguna
+ *         fila en lugar de tener que leerla antes para ver de quién es.
  */
 
 function ok(message: string): ActionState {
@@ -36,6 +55,9 @@ function ok(message: string): ActionState {
 function error(message: string): ActionState {
   return { ok: false, message };
 }
+
+/** Mensaje único para todo lo que queda fuera del alcance del usuario. */
+const FORBIDDEN = "No tenés permiso para modificar eso.";
 
 function refreshAll() {
   revalidatePath("/");
@@ -50,10 +72,20 @@ export async function cancelAppointmentAsAdmin(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireSession();
+  const user = await requireUser();
 
   const id = Number(formData.get("id"));
   if (!id) return error("Turno no encontrado.");
+
+  // Se lee antes de cancelar, con el alcance aplicado: sirve para comprobar
+  // que el turno es de quien lo está cancelando y para armar el aviso.
+  const [appointment] = await db
+    .select()
+    .from(appointments)
+    .where(withScope(user, appointments.professionalId, eq(appointments.id, id)))
+    .limit(1);
+
+  if (!appointment) return error("Turno no encontrado.");
 
   const result = await db
     .update(appointments)
@@ -63,11 +95,12 @@ export async function cancelAppointmentAsAdmin(
     })
     .where(and(eq(appointments.id, id), eq(appointments.status, "booked")));
 
-  refreshAll();
+  if (result.rowsAffected === 0) return error("Ese turno ya estaba cancelado.");
 
-  return result.rowsAffected > 0
-    ? ok("Turno cancelado. El horario quedó libre.")
-    : error("Ese turno ya estaba cancelado.");
+  await notifyProfessionalCancellation(appointment, "admin");
+
+  refreshAll();
+  return ok("Turno cancelado. El horario quedó libre.");
 }
 
 /**
@@ -79,14 +112,18 @@ export async function deleteAppointment(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireSession();
+  const user = await requireUser();
 
   const id = Number(formData.get("id"));
   if (!id) return error("Turno no encontrado.");
 
-  await db.delete(appointments).where(eq(appointments.id, id));
-  refreshAll();
+  const result = await db
+    .delete(appointments)
+    .where(withScope(user, appointments.professionalId, eq(appointments.id, id)));
 
+  if (result.rowsAffected === 0) return error("Turno no encontrado.");
+
+  refreshAll();
   return ok("Turno eliminado.");
 }
 
@@ -96,7 +133,7 @@ export async function saveProfessional(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const id = Number(formData.get("id")) || null;
   const name = String(formData.get("name") ?? "").trim();
@@ -144,7 +181,7 @@ export async function toggleProfessionalActive(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const id = Number(formData.get("id"));
   const active = formData.get("active") === "true";
@@ -158,16 +195,21 @@ export async function toggleProfessionalActive(
 
 /* ── Vacaciones ─────────────────────────────────────────────────────── */
 
-/** Interruptor inmediato, sin fechas: para cuando no se sabe hasta cuándo. */
+/**
+ * Interruptor inmediato, sin fechas: para cuando no se sabe hasta cuándo.
+ *
+ * Cada profesional puede marcarse a sí misma; la administración, a cualquiera.
+ */
 export async function toggleVacation(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const id = Number(formData.get("id"));
   const onVacation = formData.get("onVacation") === "true";
   if (!id) return error("Profesional no encontrada.");
+  if (!canAccessProfessional(user, id)) return error(FORBIDDEN);
 
   await db
     .update(professionals)
@@ -186,7 +228,7 @@ export async function addVacation(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const professionalId = Number(formData.get("professionalId"));
   const startDate = String(formData.get("startDate") ?? "");
@@ -194,6 +236,7 @@ export async function addVacation(
   const note = String(formData.get("note") ?? "").trim();
 
   if (!professionalId) return error("Profesional no encontrada.");
+  if (!canAccessProfessional(user, professionalId)) return error(FORBIDDEN);
 
   if (!isValidDateString(startDate) || !isValidDateString(endDate)) {
     return error("Revisá las fechas.");
@@ -215,12 +258,16 @@ export async function deleteVacation(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const id = Number(formData.get("id"));
   if (!id) return error("No encontrado.");
 
-  await db.delete(vacations).where(eq(vacations.id, id));
+  const result = await db
+    .delete(vacations)
+    .where(withScope(user, vacations.professionalId, eq(vacations.id, id)));
+
+  if (result.rowsAffected === 0) return error("No encontrado.");
 
   refreshAll();
   return ok("Vacaciones eliminadas.");
@@ -232,7 +279,7 @@ export async function saveService(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const id = Number(formData.get("id")) || null;
   const professionalId = Number(formData.get("professionalId"));
@@ -278,7 +325,7 @@ export async function deleteService(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const id = Number(formData.get("id"));
   if (!id) return error("Servicio no encontrado.");
@@ -297,7 +344,7 @@ export async function addWorkingHour(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const professionalId = Number(formData.get("professionalId"));
   const weekday = Number(formData.get("weekday"));
@@ -305,6 +352,7 @@ export async function addWorkingHour(
   const end = parseMinute(String(formData.get("end") ?? ""));
 
   if (!professionalId) return error("Profesional no encontrada.");
+  if (!canAccessProfessional(user, professionalId)) return error(FORBIDDEN);
   if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
     return error("Día de la semana inválido.");
   }
@@ -344,12 +392,16 @@ export async function deleteWorkingHour(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const id = Number(formData.get("id"));
   if (!id) return error("Franja no encontrada.");
 
-  await db.delete(workingHours).where(eq(workingHours.id, id));
+  const result = await db
+    .delete(workingHours)
+    .where(withScope(user, workingHours.professionalId, eq(workingHours.id, id)));
+
+  if (result.rowsAffected === 0) return error("Franja no encontrada.");
 
   refreshAll();
   return ok("Franja eliminada.");
@@ -360,7 +412,7 @@ export async function copyWorkingDay(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const professionalId = Number(formData.get("professionalId"));
   const from = Number(formData.get("fromWeekday"));
@@ -372,6 +424,7 @@ export async function copyWorkingDay(
   if (!professionalId || !Number.isInteger(from)) {
     return error("Datos incompletos.");
   }
+  if (!canAccessProfessional(user, professionalId)) return error(FORBIDDEN);
   if (targets.length === 0) return error("Elegí al menos un día de destino.");
 
   const source = await db
@@ -416,7 +469,7 @@ export async function addOverride(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const professionalId = Number(formData.get("professionalId"));
   const date = String(formData.get("date") ?? "");
@@ -424,6 +477,7 @@ export async function addOverride(
   const note = String(formData.get("note") ?? "").trim();
 
   if (!professionalId) return error("Profesional no encontrada.");
+  if (!canAccessProfessional(user, professionalId)) return error(FORBIDDEN);
   if (!isValidDateString(date)) return error("Revisá la fecha.");
   if (kind !== "closed" && kind !== "custom") return error("Tipo inválido.");
 
@@ -466,12 +520,22 @@ export async function deleteOverride(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  const user = await requireUser();
 
   const id = Number(formData.get("id"));
   if (!id) return error("Excepción no encontrada.");
 
-  await db.delete(scheduleOverrides).where(eq(scheduleOverrides.id, id));
+  const result = await db
+    .delete(scheduleOverrides)
+    .where(
+      withScope(
+        user,
+        scheduleOverrides.professionalId,
+        eq(scheduleOverrides.id, id),
+      ),
+    );
+
+  if (result.rowsAffected === 0) return error("Excepción no encontrada.");
 
   refreshAll();
   return ok("Excepción eliminada.");
@@ -502,7 +566,7 @@ export async function saveSettings(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const values: Partial<Settings> = {};
 
@@ -550,4 +614,26 @@ export async function saveSettings(
   revalidatePath("/cancelar");
 
   return ok("Cambios guardados.");
+}
+
+/**
+ * Prueba de envío. Manda un mail suelto a la dirección que se escriba, sin
+ * necesidad de sacar un turno de mentira y sin importar si el interruptor está
+ * encendido: sirve justamente para verificar la configuración antes de
+ * activarla. Guardá los ajustes primero, porque lee el remitente de la base.
+ */
+export async function sendTestEmailAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const to = normalizeEmail(String(formData.get("to") ?? ""));
+  if (!isValidEmail(to)) return error("Escribí una dirección de email válida.");
+
+  const result = await sendTestEmail(to);
+
+  return result.sent
+    ? ok(`Enviado a ${to}. Si no aparece en unos minutos, revisá el correo no deseado.`)
+    : error(result.reason ?? "No se pudo enviar.");
 }

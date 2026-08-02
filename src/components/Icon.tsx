@@ -138,6 +138,14 @@ const PATHS = {
       <path d="M18 14.4a6.5 6.5 0 0 1 3.25 5.1" />
     </>
   ),
+  /** Llave: las cuentas que pueden entrar al panel. */
+  key: (
+    <>
+      <circle cx="8" cy="15.75" r="4.25" />
+      <line x1="11.1" y1="12.65" x2="19.75" y2="4" />
+      <line x1="17" y1="6.75" x2="19.25" y2="9" />
+    </>
+  ),
   /** Sombrilla: señala a una profesional de vacaciones. */
   vacation: (
     <>

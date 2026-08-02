@@ -107,21 +107,38 @@ queda en la agenda marcado como cancelado.
 
 ---
 
-## Emails (desactivados)
+## Emails
 
-Está todo escrito pero apagado, porque requiere hosting y dominio propio.
-Mientras tanto el cliente recibe su link en la pantalla de confirmación, con un
-botón para copiarlo.
+Al confirmar un turno le llega un mail al cliente con la fecha, la hora, quién
+lo atiende y su link personal para verlo o cancelarlo. También le llega uno
+cuando cancela.
 
-Para activarlo más adelante:
+Los mails salen por [Resend](https://resend.com). Vienen apagados: hay que
+encenderlos una sola vez.
 
-1. Crear cuenta en [Resend](https://resend.com). El plan gratuito da 3.000
-   emails por mes, de sobra para este uso.
+1. Crear cuenta en Resend. El plan gratuito da 3.000 emails por mes, de sobra
+   para este uso.
 2. Verificar el dominio agregando los registros DNS que indica el panel de
-   Resend. **Sin dominio propio verificado solo se pueden enviar mails a la
-   casilla del titular de la cuenta.**
-3. Poner `RESEND_API_KEY` en el archivo `.env`.
-4. En Ajustes: cargar la dirección remitente y tildar el envío de emails.
+   Resend. **Sin dominio propio verificado solo se puede enviar a la casilla
+   del titular de la cuenta**, usando `onboarding@resend.dev` como remitente.
+   Sirve para probar, no para producción.
+3. Cargar `RESEND_API_KEY` donde corra el sitio: en el archivo `.env` para
+   desarrollo, y en Vercel → Settings → Environment Variables para producción.
+   Después de agregarla en Vercel hay que volver a desplegar.
+4. En **Ajustes → Emails de confirmación**: poner la dirección remitente
+   (tiene que ser del dominio verificado) y tildar el envío. Guardar.
+5. En **Ajustes → Probar el envío**: mandarte un mail de prueba a vos. Si llega,
+   está todo bien; si no, la pantalla dice qué contestó Resend.
+
+Conviene también cargar `APP_URL` con la dirección definitiva del sitio, para
+que el link del mail salga siempre con el dominio bueno y no con el
+`.vercel.app`. Sin `APP_URL` el link se arma con el dominio por el que entró
+esa persona, que funciona igual pero puede no ser el que querés mostrar.
+
+**Un mail que no sale nunca invalida un turno.** El turno se guarda primero y
+el cliente ve su link en la pantalla de confirmación, con un botón para
+copiarlo. Si el envío falla queda anotado el motivo en los logs del servidor
+(en Vercel: pestaña Logs, buscar `[resend]`).
 
 ---
 
@@ -251,6 +268,7 @@ cargá estas variables de entorno en el panel de Vercel:
 | `TURSO_AUTH_TOKEN` | El token de Turso |
 | `APP_URL` | La dirección final del sitio |
 | `BLOB_STORE_ID` o `BLOB_READ_WRITE_TOKEN` | Las agrega Vercel sola al conectar el almacén de fotos |
+| `RESEND_API_KEY` | Solo si querés los emails de confirmación |
 
 Vercel compila y publica solo. El HTTPS y el certificado vienen incluidos, y
 hacen falta: sin ellos no funcionan ni la cookie de sesión del panel ni el

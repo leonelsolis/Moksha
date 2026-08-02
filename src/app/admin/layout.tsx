@@ -3,7 +3,7 @@ import Link from "next/link";
 import { logout } from "@/app/actions/auth";
 import { Icon, type IconName } from "@/components/Icon";
 import { AdminNav } from "@/components/admin/AdminNav";
-import { getSession } from "@/lib/auth";
+import { getCurrentUser } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
 
 export const dynamic = "force-dynamic";
@@ -22,14 +22,16 @@ export type AdminNavItem = {
   href: string;
   label: string;
   icon: IconName;
-  ownerOnly: boolean;
+  adminOnly: boolean;
 };
 
 const NAV: AdminNavItem[] = [
-  { href: "/admin", label: "Turnos", icon: "list", ownerOnly: false },
-  { href: "/admin/horarios", label: "Horarios", icon: "calendar", ownerOnly: true },
-  { href: "/admin/profesionales", label: "Profesionales", icon: "users", ownerOnly: true },
-  { href: "/admin/ajustes", label: "Ajustes", icon: "settings", ownerOnly: true },
+  { href: "/admin", label: "Turnos", icon: "list", adminOnly: false },
+  { href: "/admin/horarios", label: "Horarios", icon: "calendar", adminOnly: false },
+  { href: "/admin/profesionales", label: "Profesionales", icon: "users", adminOnly: true },
+  { href: "/admin/usuarios", label: "Usuarios", icon: "key", adminOnly: true },
+  { href: "/admin/ajustes", label: "Ajustes", icon: "settings", adminOnly: true },
+  { href: "/admin/cuenta", label: "Mi cuenta", icon: "user", adminOnly: false },
 ];
 
 export default async function AdminLayout({
@@ -37,13 +39,13 @@ export default async function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getSession();
+  const account = await getCurrentUser();
 
   // Sin sesión solo se puede estar en /admin/login (lo garantiza el middleware).
-  if (!session) return <>{children}</>;
+  if (!account) return <>{children}</>;
 
   const settings = await getSettings();
-  const items = NAV.filter((item) => !item.ownerOnly || session.role === "owner");
+  const items = NAV.filter((item) => !item.adminOnly || account.role === "admin");
 
   return (
     <div className="flex min-h-full flex-col">
@@ -66,7 +68,8 @@ export default async function AdminLayout({
             </Link>
 
             <span className="mx-2 hidden text-sm text-ink-muted sm:inline">
-              {session.displayName}
+              {account.displayName || account.username}
+              {account.role === "admin" ? " · Administración" : null}
             </span>
 
             <form action={logout}>

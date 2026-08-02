@@ -1,10 +1,11 @@
 import { and, asc, eq, gte, lte, type SQL } from "drizzle-orm";
 
+import { Alert } from "@/components/Alert";
 import { AppointmentActions } from "@/components/admin/AppointmentActions";
 import { Icon } from "@/components/Icon";
 import { db } from "@/db";
 import { appointments, professionals } from "@/db/schema";
-import { requireSession } from "@/lib/auth";
+import { requireUser, scopeOf } from "@/lib/auth";
 import {
   addDays,
   formatDateLong,
@@ -20,6 +21,10 @@ import { getSettings } from "@/lib/settings";
  * Los filtros viajan por la URL en lugar de guardarse en estado del navegador:
  * así una búsqueda concreta ("los turnos de Ana del viernes") se puede guardar
  * en favoritos o mandar por mensaje, y recargar la página no la pierde.
+ *
+ * El filtro por profesional es el único que no sale de la URL cuando quien
+ * mira es una profesional: ahí lo fija el servidor con su propio id, así
+ * escribir `?prof=` a mano no muestra la agenda de la otra.
  */
 
 export const dynamic = "force-dynamic";
@@ -36,7 +41,8 @@ type Props = {
 };
 
 export default async function AdminAppointmentsPage({ searchParams }: Props) {
-  await requireSession();
+  const account = await requireUser();
+  const scope = scopeOf(account);
 
   const params = await searchParams;
   const settings = await getSettings();
@@ -47,7 +53,9 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
     ? params.hasta!
     : addDays(from, 30);
 
-  const professionalFilter = Number(params.prof) || 0;
+  // Para la administración el filtro es opcional (0 = todas). Para una
+  // profesional no es un filtro sino su alcance, y no se puede quitar.
+  const professionalFilter = scope ?? (Number(params.prof) || 0);
   const statusFilter = params.estado === "todos" ? "todos" : "booked";
 
   const staff = await db
@@ -86,11 +94,16 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
 
   const bookedCount = rows.filter((r) => r.appointment.status === "booked").length;
 
+  const ownName =
+    scope !== null ? staff.find((p) => p.id === scope)?.name : undefined;
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Turnos</h1>
+          <h1 className="text-xl font-semibold tracking-tight">
+            {ownName ? `Turnos de ${ownName}` : "Turnos"}
+          </h1>
           <p className="mt-0.5 text-sm text-ink-soft">
             {bookedCount === 0
               ? "No hay turnos reservados en este período."
@@ -99,9 +112,20 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
         </div>
       </div>
 
+      {scope !== null && !ownName ? (
+        <Alert tone="warning" title="Tu cuenta no está vinculada a ninguna profesional">
+          Por eso no aparece ningún turno. Pedile a la administración que vincule
+          tu cuenta desde Usuarios.
+        </Alert>
+      ) : null}
+
       {/* Filtros: form GET, sin JavaScript de por medio. */}
       <form method="get" className="panel p-3 sm:p-4">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div
+          className={`grid gap-3 sm:grid-cols-2 ${
+            scope === null ? "lg:grid-cols-5" : "lg:grid-cols-4"
+          }`}
+        >
           <div>
             <label className="field-label" htmlFor="desde">
               Desde
@@ -128,24 +152,27 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
             />
           </div>
 
-          <div>
-            <label className="field-label" htmlFor="prof">
-              Profesional
-            </label>
-            <select
-              id="prof"
-              name="prof"
-              defaultValue={String(professionalFilter || "")}
-              className="input"
-            >
-              <option value="">Todas</option>
-              {staff.map((person) => (
-                <option key={person.id} value={person.id}>
-                  {person.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {/* Una profesional no elige de quién ve los turnos: son los suyos. */}
+          {scope === null ? (
+            <div>
+              <label className="field-label" htmlFor="prof">
+                Profesional
+              </label>
+              <select
+                id="prof"
+                name="prof"
+                defaultValue={String(professionalFilter || "")}
+                className="input"
+              >
+                <option value="">Todas</option>
+                {staff.map((person) => (
+                  <option key={person.id} value={person.id}>
+                    {person.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
 
           <div>
             <label className="field-label" htmlFor="estado">

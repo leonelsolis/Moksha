@@ -141,6 +141,38 @@ const MIGRATIONS: string[][] = [
      )`,
     `CREATE INDEX IF NOT EXISTS rate_limits_reset_idx ON rate_limits(reset_at)`,
   ],
+
+  // ── v3 · una cuenta por profesional ─────────────────────────────────────
+  [
+    /**
+     * Cada cuenta del panel puede quedar atada a una profesional.
+     *
+     * `professional_id` es lo que permite aislar los datos: con él puesto, el
+     * usuario solo ve los turnos, horarios y vacaciones de esa profesional. En
+     * las cuentas de administración queda en NULL, que significa "todas".
+     *
+     * `email` es la dirección de contacto de la cuenta, no la del negocio: es
+     * a donde le llegan los avisos de turno nuevo y de cancelación, y a futuro
+     * será por donde se recupere la contraseña.
+     *
+     * `active` da de baja una cuenta sin borrarla, para no perder el rastro de
+     * quién hizo qué.
+     */
+    `ALTER TABLE admin_users ADD COLUMN professional_id INTEGER REFERENCES professionals(id)`,
+    `ALTER TABLE admin_users ADD COLUMN email TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE admin_users ADD COLUMN active INTEGER NOT NULL DEFAULT 1`,
+    `CREATE INDEX IF NOT EXISTS admin_users_professional_idx ON admin_users(professional_id)`,
+
+    /*
+     * Los roles cambian de nombre junto con su significado. 'owner' pasa a
+     * 'admin' sin perder nada. 'staff' (la vieja recepción, que veía todos los
+     * turnos sin poder configurar) pasa a 'profesional' con professional_id en
+     * NULL: hasta que un admin la vincule a una profesional concreta no ve
+     * ningún turno, que es el lado seguro del cambio.
+     */
+    `UPDATE admin_users SET role = 'admin' WHERE role = 'owner'`,
+    `UPDATE admin_users SET role = 'profesional' WHERE role NOT IN ('admin', 'profesional')`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { professionals } from "@/db/schema";
 import type { ActionState } from "@/lib/action-state";
-import { requireOwner } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { getSettings, updateSettings } from "@/lib/settings";
 
 /**
@@ -103,7 +103,7 @@ export async function uploadProfessionalPhoto(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const professionalId = Number(formData.get("professionalId"));
   if (!professionalId) return error("Profesional no encontrada.");
@@ -144,7 +144,7 @@ export async function removeProfessionalPhoto(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const professionalId = Number(formData.get("professionalId"));
   if (!professionalId) return error("Profesional no encontrada.");
@@ -180,7 +180,7 @@ export async function uploadLogo(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const resultado = await subirImagen(formData.get("photo"), "logo");
   if ("message" in resultado) return error(resultado.message);
@@ -202,7 +202,7 @@ export async function removeLogo(
   _prev: ActionState,
   _formData: FormData,
 ): Promise<ActionState> {
-  await requireOwner();
+  await requireAdmin();
 
   const { business_logo_url: anterior } = await getSettings();
 

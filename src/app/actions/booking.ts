@@ -15,8 +15,13 @@ import type {
 import { isSlotBookable } from "@/lib/availability";
 import { formatDateLong, formatMinute, minutesUntil, nowInTz } from "@/lib/dates";
 import { sendBookingConfirmation, sendCancellationConfirmation } from "@/lib/email";
+import {
+  notifyProfessionalCancellation,
+  notifyProfessionalNewBooking,
+} from "@/lib/notify";
 import { checkRateLimit, clientKey } from "@/lib/rate-limit";
 import { getSettings, settingBool, settingInt } from "@/lib/settings";
+import { siteOrigin } from "@/lib/site-url";
 import { generateCancelToken, hashToken, looksLikeToken } from "@/lib/tokens";
 import {
   normalizeDni,
@@ -172,8 +177,9 @@ export async function createBooking(
   }
 
   // El envío puede fallar sin que eso invalide el turno: ya está guardado y el
-  // cliente ve el link en la pantalla siguiente.
-  await sendBookingConfirmation({
+  // cliente ve el link en la pantalla siguiente. Igual queda anotado el motivo
+  // en los logs del servidor, que es lo único que explica un mail que no llegó.
+  const mail = await sendBookingConfirmation({
     to: value.email,
     firstName: value.firstName,
     professionalName: professional.name,
@@ -181,7 +187,27 @@ export async function createBooking(
     date,
     startMinute,
     manageUrl: await buildManageUrl(token),
-  }).catch(() => undefined);
+  }).catch((e) => ({ sent: false, reason: String(e) }));
+
+  if (!mail.sent) {
+    console.warn("[email] no se envió la confirmación:", mail.reason);
+  }
+
+  // Aviso a la profesional, al email de su cuenta del panel. Tampoco puede
+  // hacer fallar la reserva: `notifyProfessionalNewBooking` se traga sus
+  // propios errores.
+  await notifyProfessionalNewBooking({
+    professionalId,
+    date,
+    startMinute,
+    endMinute,
+    serviceName: service.name,
+    firstName: value.firstName,
+    lastName: value.lastName,
+    dni: value.dni,
+    email: value.email,
+    phone: value.phone,
+  });
 
   revalidatePath("/");
   revalidatePath("/admin");
@@ -190,8 +216,7 @@ export async function createBooking(
 }
 
 async function buildManageUrl(token: string) {
-  const base = process.env.APP_URL?.replace(/\/$/, "") ?? "";
-  return `${base}/turno/${token}`;
+  return `${await siteOrigin()}/turno/${token}`;
 }
 
 /**
@@ -266,6 +291,8 @@ export async function cancelBooking(
     date: appointment.date,
     startMinute: appointment.startMinute,
   }).catch(() => undefined);
+
+  await notifyProfessionalCancellation(appointment, "client");
 
   revalidatePath("/");
   revalidatePath(`/turno/${token}`);
