@@ -17,6 +17,9 @@ import bcrypt from "bcryptjs";
 
 // Se importa `connection` y no `@/db`: ese último lleva la marca `server-only`,
 // que sirve dentro de Next pero hace fallar a un script de consola.
+// Tiene que ir antes de importar la conexión: define qué base se usa.
+import "./load-env";
+
 import { client, db } from "../src/db/connection";
 import {
   adminUsers,

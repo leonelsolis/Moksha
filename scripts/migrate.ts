@@ -11,6 +11,9 @@
  * Es seguro correrlo de más: si no hay nada pendiente, no hace nada.
  */
 
+// Tiene que ir antes de importar la conexión: define qué base se usa.
+import "./load-env";
+
 import { client, isRemoteDatabase } from "../src/db/connection";
 import { runMigrations } from "../src/db/migrations";
 
