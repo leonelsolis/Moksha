@@ -18,7 +18,7 @@ import type { Client } from "@libsql/client";
 const MIGRATIONS: string[][] = [
   // ── v1 · esquema inicial ────────────────────────────────────────────────
   [
-    `CREATE TABLE professionals (
+    `CREATE TABLE IF NOT EXISTS professionals (
        id           INTEGER PRIMARY KEY AUTOINCREMENT,
        name         TEXT    NOT NULL,
        specialty    TEXT    NOT NULL DEFAULT '',
@@ -30,7 +30,7 @@ const MIGRATIONS: string[][] = [
        created_at   INTEGER NOT NULL DEFAULT (unixepoch())
      )`,
 
-    `CREATE TABLE services (
+    `CREATE TABLE IF NOT EXISTS services (
        id               INTEGER PRIMARY KEY AUTOINCREMENT,
        professional_id  INTEGER NOT NULL REFERENCES professionals(id) ON DELETE CASCADE,
        name             TEXT    NOT NULL,
@@ -39,27 +39,27 @@ const MIGRATIONS: string[][] = [
        active           INTEGER NOT NULL DEFAULT 1,
        sort_order       INTEGER NOT NULL DEFAULT 0
      )`,
-    `CREATE INDEX services_professional_idx ON services(professional_id)`,
+    `CREATE INDEX IF NOT EXISTS services_professional_idx ON services(professional_id)`,
 
-    `CREATE TABLE vacations (
+    `CREATE TABLE IF NOT EXISTS vacations (
        id               INTEGER PRIMARY KEY AUTOINCREMENT,
        professional_id  INTEGER NOT NULL REFERENCES professionals(id) ON DELETE CASCADE,
        start_date       TEXT    NOT NULL,
        end_date         TEXT    NOT NULL,
        note             TEXT    NOT NULL DEFAULT ''
      )`,
-    `CREATE INDEX vacations_professional_idx ON vacations(professional_id)`,
+    `CREATE INDEX IF NOT EXISTS vacations_professional_idx ON vacations(professional_id)`,
 
-    `CREATE TABLE working_hours (
+    `CREATE TABLE IF NOT EXISTS working_hours (
        id               INTEGER PRIMARY KEY AUTOINCREMENT,
        professional_id  INTEGER NOT NULL REFERENCES professionals(id) ON DELETE CASCADE,
        weekday          INTEGER NOT NULL,
        start_minute     INTEGER NOT NULL,
        end_minute       INTEGER NOT NULL
      )`,
-    `CREATE INDEX working_hours_professional_idx ON working_hours(professional_id, weekday)`,
+    `CREATE INDEX IF NOT EXISTS working_hours_professional_idx ON working_hours(professional_id, weekday)`,
 
-    `CREATE TABLE schedule_overrides (
+    `CREATE TABLE IF NOT EXISTS schedule_overrides (
        id               INTEGER PRIMARY KEY AUTOINCREMENT,
        professional_id  INTEGER NOT NULL REFERENCES professionals(id) ON DELETE CASCADE,
        date             TEXT    NOT NULL,
@@ -68,9 +68,9 @@ const MIGRATIONS: string[][] = [
        end_minute       INTEGER,
        note             TEXT    NOT NULL DEFAULT ''
      )`,
-    `CREATE INDEX overrides_professional_date_idx ON schedule_overrides(professional_id, date)`,
+    `CREATE INDEX IF NOT EXISTS overrides_professional_date_idx ON schedule_overrides(professional_id, date)`,
 
-    `CREATE TABLE appointments (
+    `CREATE TABLE IF NOT EXISTS appointments (
        id                INTEGER PRIMARY KEY AUTOINCREMENT,
        professional_id   INTEGER NOT NULL REFERENCES professionals(id),
        service_id        INTEGER,
@@ -100,15 +100,15 @@ const MIGRATIONS: string[][] = [
      * de distinta duración lo resuelve la inserción condicional de
      * `createBooking`.
      */
-    `CREATE UNIQUE INDEX appointments_slot_unique
+    `CREATE UNIQUE INDEX IF NOT EXISTS appointments_slot_unique
        ON appointments(professional_id, date, start_minute)
        WHERE status = 'booked'`,
 
-    `CREATE UNIQUE INDEX appointments_cancel_token_idx ON appointments(cancel_token_hash)`,
-    `CREATE INDEX appointments_date_idx ON appointments(date, professional_id)`,
-    `CREATE INDEX appointments_lookup_idx ON appointments(dni, email)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS appointments_cancel_token_idx ON appointments(cancel_token_hash)`,
+    `CREATE INDEX IF NOT EXISTS appointments_date_idx ON appointments(date, professional_id)`,
+    `CREATE INDEX IF NOT EXISTS appointments_lookup_idx ON appointments(dni, email)`,
 
-    `CREATE TABLE admin_users (
+    `CREATE TABLE IF NOT EXISTS admin_users (
        id            INTEGER PRIMARY KEY AUTOINCREMENT,
        username      TEXT    NOT NULL UNIQUE,
        password_hash TEXT    NOT NULL,
@@ -118,7 +118,7 @@ const MIGRATIONS: string[][] = [
        last_login_at INTEGER
      )`,
 
-    `CREATE TABLE settings (
+    `CREATE TABLE IF NOT EXISTS settings (
        key   TEXT PRIMARY KEY,
        value TEXT NOT NULL
      )`,
@@ -134,12 +134,12 @@ const MIGRATIONS: string[][] = [
      * límite se multiplicaba por la cantidad de instancias. En la base es un
      * único contador compartido por todas.
      */
-    `CREATE TABLE rate_limits (
+    `CREATE TABLE IF NOT EXISTS rate_limits (
        key      TEXT    PRIMARY KEY,
        count    INTEGER NOT NULL,
        reset_at INTEGER NOT NULL
      )`,
-    `CREATE INDEX rate_limits_reset_idx ON rate_limits(reset_at)`,
+    `CREATE INDEX IF NOT EXISTS rate_limits_reset_idx ON rate_limits(reset_at)`,
   ],
 ];
 
