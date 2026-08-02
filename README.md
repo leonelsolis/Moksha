@@ -139,7 +139,11 @@ nueva obligaría a hacer un despliegue.
 ### Configurarlo una sola vez
 
 1. En Vercel, entrá a tu proyecto → pestaña **Storage** → **Create** → **Blob**.
-2. Ponele un nombre (por ejemplo `moksha-fotos`) y creá el almacén.
+2. Ponele un nombre (por ejemplo `moksha-fotos`) y elegí acceso **público**
+   (*public*). Esto es importante y no se puede cambiar después: las fotos se
+   muestran en la web, así que en un almacén privado la subida falla con
+   «No se pudo subir la imagen». Si te equivocaste, creá otro almacén público,
+   conectalo y borrá el privado.
 3. **Connect to Project** → elegí el proyecto y los tres entornos (Production,
    Preview y Development). Vercel agrega las variables solo, no hay que copiar
    nada a mano.

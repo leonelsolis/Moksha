@@ -88,7 +88,11 @@ async function subirImagen(
     });
 
     return { url: blob.url };
-  } catch {
+  } catch (e) {
+    // El mensaje que ve la usuaria es genérico a propósito, pero el detalle
+    // queda en los logs del servidor: sin esto, un fallo de almacenamiento es
+    // imposible de diagnosticar.
+    console.error("[blob] falló la subida", prefijo, e);
     return { message: "No se pudo subir la imagen. Probá de nuevo en un momento." };
   }
 }
