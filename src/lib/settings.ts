@@ -37,6 +37,15 @@ export const SETTING_DEFAULTS = {
   /** Requiere dominio verificado en Resend. Ver README. */
   email_enabled: "false",
   email_from: "",
+
+  /** Cobros online ──────────────────────────────────────────────────── */
+  /**
+   * Interruptor global de Mercado Pago. Apagado por defecto: la web funciona
+   * completa sin cobro online, y recién cuando el cliente carga su
+   * MERCADOPAGO_ACCESS_TOKEN en el servidor y enciende esto empieza a cobrar.
+   * Ver src/lib/mercadopago.ts.
+   */
+  mp_enabled: "false",
 } as const;
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS;

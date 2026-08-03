@@ -5,6 +5,7 @@ import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
 import { ImageUpload } from "@/components/admin/ImageUpload";
 import { requireAdmin } from "@/lib/auth";
 import { emailConfig } from "@/lib/email";
+import { mercadoPagoConfig } from "@/lib/mercadopago";
 import { getSettings, settingBool } from "@/lib/settings";
 
 /**
@@ -24,6 +25,7 @@ export default async function SettingsPage() {
 
   const settings = await getSettings();
   const mail = emailConfig(settings);
+  const mp = mercadoPagoConfig(settings);
 
   return (
     <div className="space-y-5">
@@ -324,6 +326,52 @@ export default async function SettingsPage() {
                 Resend solo lo deja llegar a tu propia casilla.
               </p>
             </div>
+          </div>
+        </section>
+
+        {/* ── Cobros online ─────────────────────────────────────────── */}
+        <section className="panel overflow-hidden">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-sm font-medium">Cobros online</h2>
+            <p className="mt-0.5 text-xs text-ink-soft">
+              Cobrar el turno con Mercado Pago al momento de reservarlo. Es
+              opcional: con esto apagado la web funciona igual que siempre y el
+              turno se reserva sin pagar nada.
+            </p>
+          </div>
+
+          <div className="space-y-3 p-4">
+            {!mp.hasToken ? (
+              <Alert tone="warning">
+                Falta cargar <code>MERCADOPAGO_ACCESS_TOKEN</code> en el
+                servidor. Hasta que esté, no se cobra nada aunque marques la
+                casilla.
+              </Alert>
+            ) : mp.ready && mp.isTestToken ? (
+              <Alert tone="warning">
+                El cobro está activo pero con credenciales de prueba: los pagos
+                no son reales. Cambiá el token por el de producción cuando
+                quieras empezar a cobrar de verdad.
+              </Alert>
+            ) : mp.ready ? (
+              <Alert tone="success">El cobro con Mercado Pago está activo.</Alert>
+            ) : null}
+
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="mp_enabled"
+                defaultChecked={settingBool(settings, "mp_enabled")}
+                className="mt-0.5 size-4 accent-[var(--color-accent)]"
+              />
+              <span>
+                Cobrar el turno con Mercado Pago
+                <span className="mt-0.5 block text-xs text-ink-muted">
+                  Requiere una cuenta de Mercado Pago y su Access Token cargado
+                  en el servidor. Ver el README.
+                </span>
+              </span>
+            </label>
           </div>
         </section>
 

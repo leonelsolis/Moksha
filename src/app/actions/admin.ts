@@ -603,9 +603,14 @@ const EDITABLE_SETTINGS: SettingKey[] = [
   "allow_client_lookup",
   "email_enabled",
   "email_from",
+  "mp_enabled",
 ];
 
-const CHECKBOX_SETTINGS: SettingKey[] = ["allow_client_lookup", "email_enabled"];
+const CHECKBOX_SETTINGS: SettingKey[] = [
+  "allow_client_lookup",
+  "email_enabled",
+  "mp_enabled",
+];
 
 export async function saveSettings(
   _prev: ActionState,

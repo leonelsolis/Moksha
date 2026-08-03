@@ -192,6 +192,47 @@ const MIGRATIONS: string[][] = [
     `ALTER TABLE services ADD COLUMN photo_url TEXT`,
     `ALTER TABLE services ADD COLUMN show_photo INTEGER NOT NULL DEFAULT 0`,
   ],
+
+  /**
+   * ── v5 y v6 · números quemados, a propósito vacíos ──────────────────────
+   *
+   * Un intento anterior de Mercado Pago (señas obligatorias) llegó a aplicar
+   * sus migraciones v5 y v6 en las bases de desarrollo antes de que ese
+   * trabajo se sacara de `main`. Esas bases tienen `_migrations` en 6, con
+   * columnas y tablas que el código actual ya no usa (`services.deposit_amount`,
+   * `appointments.mp_preference_id`, la tabla `mp_payments`).
+   *
+   * Los números no se pueden reciclar: una base que ya registró la 5 y la 6
+   * nunca las vuelve a ejecutar, así que si acá pusiéramos SQL nuevo con esos
+   * números, en esas bases no correría jamás y el error aparecería recién en
+   * producción. Quedan como entradas vacías —se registran sin ejecutar nada— y
+   * lo nuevo arranca en v7.
+   *
+   * Las columnas viejas se dejan donde están: están vacías, no molestan, y
+   * sacarlas es un movimiento aparte que no hace falta para esto.
+   */
+  [],
+  [],
+
+  // ── v7 · cobro online opcional (Mercado Pago) ───────────────────────────
+  [
+    /**
+     * Interruptor global de la integración con Mercado Pago.
+     *
+     * No hay columna nueva: `settings` es clave/valor, así que el flag es una
+     * fila más. La migración solo la deja creada para que exista en la base
+     * desde el minuto cero, en lugar de aparecer recién cuando alguien guarda
+     * Ajustes por primera vez.
+     *
+     * Arranca apagado a propósito. Sin token cargado en el servidor la web
+     * tiene que seguir funcionando exactamente como hasta ahora: se reserva el
+     * turno y no se cobra nada online.
+     *
+     * `INSERT OR IGNORE` hace que correr la migración sobre una base donde el
+     * cliente ya lo encendió no se lo apague de vuelta.
+     */
+    `INSERT OR IGNORE INTO settings (key, value) VALUES ('mp_enabled', 'false')`,
+  ],
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
