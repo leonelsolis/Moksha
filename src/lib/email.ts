@@ -159,6 +159,25 @@ function layout(businessName: string, body: string) {
 }
 
 /**
+ * Botón de acción.
+ *
+ * Va armado con una tabla y no con un `<a>` con padding porque Outlook dibuja
+ * el HTML con el motor de Word, que ignora el padding de un enlace: el botón
+ * quedaría como un texto suelto del color equivocado. El color de fondo va en
+ * `bgcolor` además de en el CSS por la misma razón.
+ *
+ * Quien lo use tiene que dejar también la URL escrita abajo. Varios clientes
+ * recortan el HTML o lo muestran en texto plano, y ahí un botón no existe.
+ */
+function button(url: string, label: string) {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0 0 20px">
+    <tr><td bgcolor="#2f5d50" style="border-radius:6px">
+      <a href="${esc(url)}" style="display:inline-block;padding:13px 28px;font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none">${esc(label)}</a>
+    </td></tr>
+  </table>`;
+}
+
+/**
  * Confirmación de turno. Nunca hace fallar la reserva: si el envío falla, el
  * turno ya está guardado y el cliente tiene el link en pantalla.
  */
@@ -231,8 +250,10 @@ export async function sendPasswordReset(data: {
       html: layout(
         settings.business_name,
         `<h1 style="font-size:22px;margin:0 0 16px">Hola ${esc(data.displayName || data.username)}</h1>
-         <p style="margin:0 0 16px">Pediste recuperar la contraseña de la cuenta <strong>${esc(data.username)}</strong>. Entrá acá para elegir una nueva:</p>
-         <p style="margin:0 0 24px"><a href="${esc(data.resetUrl)}" style="color:#2f5d50">${esc(data.resetUrl)}</a></p>
+         <p style="margin:0 0 20px">Pediste recuperar la contraseña de la cuenta <strong>${esc(data.username)}</strong>. Entrá acá para elegir una nueva:</p>
+         ${button(data.resetUrl, "Cambiar mi contraseña")}
+         <p style="margin:0 0 8px;font-size:13px;color:#78716c">Si el botón no te funciona, copiá y pegá esta dirección en el navegador:</p>
+         <p style="margin:0 0 24px;font-size:13px;word-break:break-all"><a href="${esc(data.resetUrl)}" style="color:#2f5d50">${esc(data.resetUrl)}</a></p>
          <p style="margin:0 0 16px">El link vence en ${data.expiresInMinutes} minutos y sirve una sola vez.</p>
          <p style="font-size:13px;color:#78716c;margin:0">Si no pediste esto, no hace falta que hagas nada: tu contraseña sigue siendo la de siempre.</p>`,
       ),
