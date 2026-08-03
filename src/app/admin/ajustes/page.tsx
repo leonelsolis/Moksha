@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { saveSettings, sendTestEmailAction } from "@/app/actions/admin";
 import { removeLogo, uploadLogo } from "@/app/actions/photos";
 import { Alert } from "@/components/Alert";
@@ -329,52 +331,6 @@ export default async function SettingsPage() {
           </div>
         </section>
 
-        {/* ── Cobros online ─────────────────────────────────────────── */}
-        <section className="panel overflow-hidden">
-          <div className="border-b border-line px-4 py-3">
-            <h2 className="text-sm font-medium">Cobros online</h2>
-            <p className="mt-0.5 text-xs text-ink-soft">
-              Cobrar el turno con Mercado Pago al momento de reservarlo. Es
-              opcional: con esto apagado la web funciona igual que siempre y el
-              turno se reserva sin pagar nada.
-            </p>
-          </div>
-
-          <div className="space-y-3 p-4">
-            {!mp.hasToken ? (
-              <Alert tone="warning">
-                Falta cargar <code>MERCADOPAGO_ACCESS_TOKEN</code> en el
-                servidor. Hasta que esté, no se cobra nada aunque marques la
-                casilla.
-              </Alert>
-            ) : mp.ready && mp.isTestToken ? (
-              <Alert tone="warning">
-                El cobro está activo pero con credenciales de prueba: los pagos
-                no son reales. Cambiá el token por el de producción cuando
-                quieras empezar a cobrar de verdad.
-              </Alert>
-            ) : mp.ready ? (
-              <Alert tone="success">El cobro con Mercado Pago está activo.</Alert>
-            ) : null}
-
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                name="mp_enabled"
-                defaultChecked={settingBool(settings, "mp_enabled")}
-                className="mt-0.5 size-4 accent-[var(--color-accent)]"
-              />
-              <span>
-                Cobrar el turno con Mercado Pago
-                <span className="mt-0.5 block text-xs text-ink-muted">
-                  Requiere una cuenta de Mercado Pago y su Access Token cargado
-                  en el servidor. Ver el README.
-                </span>
-              </span>
-            </label>
-          </div>
-        </section>
-
         <SubmitButton className="btn btn-primary">Guardar ajustes</SubmitButton>
       </ActionForm>
 
@@ -413,6 +369,22 @@ export default async function SettingsPage() {
         </div>
       </section>
 
+      {/* Los cobros se configuran en su propia pantalla; acá queda el atajo
+          porque es donde la mayoría los va a buscar. */}
+      <section className="panel flex flex-wrap items-center justify-between gap-3 p-4">
+        <div className="min-w-0">
+          <h2 className="text-sm font-medium">Señas y cobros online</h2>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            {mp.ready
+              ? "Se está cobrando la seña con Mercado Pago al reservar."
+              : "Los pagos y señas están desactivados: los turnos se confirman sin seña."}
+          </p>
+        </div>
+
+        <Link href="/admin/depositos" className="btn btn-secondary btn-sm">
+          Configurar cobros
+        </Link>
+      </section>
     </div>
   );
 }

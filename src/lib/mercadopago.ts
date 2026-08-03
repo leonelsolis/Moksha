@@ -68,7 +68,24 @@ export function mercadoPagoConfig(settings: Settings) {
     isTestToken: token?.startsWith("TEST-") ?? false,
     /** Solo con las dos cosas se cobra online. */
     ready: token !== null && enabled,
+    /** Para mostrar en el panel cuál token quedó cargado. Ver `maskToken`. */
+    tokenPreview: token ? maskToken(token) : null,
   };
+}
+
+/**
+ * El token, tapado, para poder mostrarlo en pantalla.
+ *
+ * Se deja ver el prefijo —que dice si es de prueba o de producción— y los
+ * últimos cuatro caracteres, que alcanzan para reconocer cuál de las dos
+ * credenciales quedó cargada. El resto no se muestra nunca: el panel es una
+ * pantalla más, y un token completo a la vista se filtra en una captura, en
+ * una sesión compartida o en el historial del navegador.
+ */
+export function maskToken(token: string) {
+  const [prefix] = token.split("-", 1);
+  const tail = token.slice(-4);
+  return `${prefix}-••••••••${tail}`;
 }
 
 /**
