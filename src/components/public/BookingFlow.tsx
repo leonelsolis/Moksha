@@ -49,6 +49,7 @@ export function BookingFlow({ professionals, window, cancelCutoffHours }: Props)
     null,
   );
   const [service, setService] = useState<PublicService | null>(null);
+  const [serviceConfirmed, setServiceConfirmed] = useState(false);
   const [date, setDate] = useState<string | null>(null);
   const [startMinute, setStartMinute] = useState<number | null>(null);
 
@@ -115,14 +116,20 @@ export function BookingFlow({ professionals, window, cancelCutoffHours }: Props)
     setProfessional(next);
     // Con un solo servicio no tiene sentido hacer elegir: se saltea el paso.
     setService(next.services.length === 1 ? next.services[0] : null);
+    setServiceConfirmed(next.services.length === 1);
     setDate(null);
     setStartMinute(null);
   }
 
   function selectService(next: PublicService) {
     setService(next);
+    setServiceConfirmed(false);
     setDate(null);
     setStartMinute(null);
+  }
+
+  function confirmService() {
+    setServiceConfirmed(true);
   }
 
   function selectDate(next: string) {
@@ -145,6 +152,7 @@ export function BookingFlow({ professionals, window, cancelCutoffHours }: Props)
   const steps = buildSteps({
     professional,
     service,
+    serviceConfirmed,
     date,
     startMinute,
     showServiceStep,
@@ -201,37 +209,51 @@ export function BookingFlow({ professionals, window, cancelCutoffHours }: Props)
             summary={service ? `${service.name} · ${service.durationMinutes} min` : undefined}
             onEdit={() => {
               setService(null);
+              setServiceConfirmed(false);
               setDate(null);
               setStartMinute(null);
             }}
           >
-            <div className="grid gap-2 sm:grid-cols-2">
-              {professional?.services.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => selectService(item)}
-                  aria-pressed={service?.id === item.id}
-                  className={`flex items-center justify-between gap-3 rounded-sm border p-3 text-left transition-colors ${
-                    service?.id === item.id
-                      ? "border-accent bg-accent-soft"
-                      : "border-line-strong bg-surface hover:bg-surface-sunken"
-                  }`}
-                >
-                  <span className="min-w-0">
-                    <span className="block text-sm font-medium">{item.name}</span>
-                    <span className="mt-0.5 block text-xs text-ink-soft tabular">
-                      {item.durationMinutes} min
-                      {item.price != null
-                        ? ` · $${item.price.toLocaleString("es-AR")}`
-                        : ""}
+            <div className="space-y-4">
+              <div className="grid gap-2 sm:grid-cols-2">
+                {professional?.services.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => selectService(item)}
+                    aria-pressed={service?.id === item.id}
+                    className={`flex items-start justify-between gap-3 rounded-sm border p-3 text-left transition-colors ${
+                      service?.id === item.id
+                        ? "border-accent bg-accent-soft"
+                        : "border-line-strong bg-surface hover:bg-surface-sunken"
+                    }`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">{item.name}</span>
+                      <span className="mt-1 block text-xs text-ink-soft tabular">
+                        {item.durationMinutes} min
+                      </span>
+                      {item.price != null ? (
+                        <span className="mt-1 block text-sm font-semibold text-accent tabular">
+                          ${item.price.toLocaleString("es-AR")}
+                        </span>
+                      ) : null}
                     </span>
-                  </span>
-                  {service?.id === item.id ? (
-                    <Icon name="check" className="size-4 shrink-0 text-accent" />
-                  ) : null}
+                    {service?.id === item.id ? (
+                      <Icon name="check" className="size-4 shrink-0 text-accent" />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+              {service && !serviceConfirmed ? (
+                <button
+                  type="button"
+                  onClick={confirmService}
+                  className="btn btn-primary w-full"
+                >
+                  Continuar
                 </button>
-              ))}
+              ) : null}
             </div>
           </Step>
         ) : null}
@@ -509,11 +531,12 @@ function Step({
 function buildSteps(selection: {
   professional: PublicProfessionalView | null;
   service: PublicService | null;
+  serviceConfirmed: boolean;
   date: string | null;
   startMinute: number | null;
   showServiceStep: boolean;
 }): Record<"professional" | "service" | "date" | "time" | "details", StepState> {
-  const { professional, service, date, startMinute } = selection;
+  const { professional, service, serviceConfirmed, date, startMinute } = selection;
 
   const order: ("professional" | "service" | "date" | "time" | "details")[] = [
     "professional",
@@ -525,7 +548,7 @@ function buildSteps(selection: {
 
   const complete: Record<string, boolean> = {
     professional: professional !== null,
-    service: service !== null,
+    service: service !== null && serviceConfirmed,
     date: date !== null,
     time: startMinute !== null,
     details: false,
