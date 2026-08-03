@@ -204,6 +204,43 @@ export async function sendCancellationConfirmation(data: {
   });
 }
 
+/**
+ * Link para recuperar la contraseña del panel.
+ *
+ * Sale con `deliver` y no con `send`, o sea salteando el interruptor de
+ * Ajustes. Ese interruptor decide si se mandan los avisos de turnos; dejar a
+ * alguien afuera de su propio panel no es parte de apagar esos avisos. Con la
+ * clave de Resend cargada y un remitente configurado, este mail sale siempre.
+ *
+ * Lleva el nombre de usuario adentro porque una misma dirección puede estar en
+ * más de una cuenta: sin eso, quien recibe dos mails no sabe cuál es cuál.
+ */
+export async function sendPasswordReset(data: {
+  to: string;
+  username: string;
+  displayName: string;
+  resetUrl: string;
+  expiresInMinutes: number;
+}): Promise<SendResult> {
+  const settings = await getSettings();
+
+  return deliver(
+    {
+      to: data.to,
+      subject: `Recuperar tu contraseña — ${settings.business_name}`,
+      html: layout(
+        settings.business_name,
+        `<h1 style="font-size:22px;margin:0 0 16px">Hola ${esc(data.displayName || data.username)}</h1>
+         <p style="margin:0 0 16px">Pediste recuperar la contraseña de la cuenta <strong>${esc(data.username)}</strong>. Entrá acá para elegir una nueva:</p>
+         <p style="margin:0 0 24px"><a href="${esc(data.resetUrl)}" style="color:#2f5d50">${esc(data.resetUrl)}</a></p>
+         <p style="margin:0 0 16px">El link vence en ${data.expiresInMinutes} minutos y sirve una sola vez.</p>
+         <p style="font-size:13px;color:#78716c;margin:0">Si no pediste esto, no hace falta que hagas nada: tu contraseña sigue siendo la de siempre.</p>`,
+      ),
+    },
+    settings,
+  );
+}
+
 /* ── Avisos a la profesional ─────────────────────────────────────────── */
 
 /**

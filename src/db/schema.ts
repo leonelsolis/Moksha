@@ -243,6 +243,39 @@ export const adminUsers = sqliteTable(
   (t) => [index("admin_users_professional_idx").on(t.professionalId)],
 );
 
+/**
+ * Pedidos de recuperación de contraseña.
+ *
+ * Igual que con los tokens de cancelación, acá solo vive el hash SHA-256: el
+ * token en claro existe únicamente en el link que llega al mail. Un volcado de
+ * la base no alcanza para entrar a ninguna cuenta.
+ *
+ * Es una tabla aparte y no un par de columnas en `admin_users` porque un token
+ * es un hecho con vida propia: se emite, vence y se usa una sola vez. Las filas
+ * gastadas se borran solas al día siguiente (ver `sweepPasswordResets`).
+ */
+export const passwordResets = sqliteTable(
+  "password_resets",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => adminUsers.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    /** Timestamp unix: es un instante real, no una fecha del negocio. */
+    expiresAt: integer("expires_at").notNull(),
+    /** Se completa al usarlo. Un token usado no sirve por segunda vez. */
+    usedAt: integer("used_at"),
+    createdAt: integer("created_at")
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (t) => [
+    uniqueIndex("password_resets_token_idx").on(t.tokenHash),
+    index("password_resets_user_idx").on(t.userId),
+  ],
+);
+
 /** Configuración clave/valor. Todo lo que distingue a un negocio de otro. */
 export const settings = sqliteTable("settings", {
   key: text("key").primaryKey(),
@@ -269,3 +302,4 @@ export type WorkingHour = typeof workingHours.$inferSelect;
 export type ScheduleOverride = typeof scheduleOverrides.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
+export type PasswordReset = typeof passwordResets.$inferSelect;
