@@ -331,6 +331,14 @@ export type MigrationOutcome = {
 /**
  * Aplica las migraciones pendientes.
  *
+ * Cada migración tiene que poder convivir con el código de la versión
+ * anterior. En producción esto corre durante el build (`scripts/predeploy.ts`),
+ * o sea antes de que el deploy nuevo reemplace al que está sirviendo: hay unos
+ * segundos —o para siempre, si el deploy se revierte— en los que la base está
+ * adelante del código vivo. Agregar columnas y tablas es seguro; renombrar o
+ * borrar algo que el código anterior todavía lee, no. Sacar una columna va en
+ * dos pasos y dos despliegues: primero se deja de usar, después se borra.
+ *
  * No se ejecuta al arrancar la aplicación: en un entorno sin servidor eso
  * significaría intentarlo en cada arranque en frío y desde varias instancias a
  * la vez. Se corre a mano con `npm run db:migrate`.
