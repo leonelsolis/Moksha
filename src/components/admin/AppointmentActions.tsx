@@ -19,10 +19,11 @@ type Mode = "cancel" | "delete";
 
 export function AppointmentActions({
   id,
-  isBooked,
+  canCancel,
 }: {
   id: number;
-  isBooked: boolean;
+  /** Solo los turnos que todavía ocupan el horario se pueden cancelar. */
+  canCancel: boolean;
 }) {
   const [mode, setMode] = useState<Mode | null>(null);
 
@@ -71,7 +72,7 @@ export function AppointmentActions({
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {isBooked ? (
+      {canCancel ? (
         <button
           type="button"
           className="btn btn-danger btn-sm"

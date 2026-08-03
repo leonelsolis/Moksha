@@ -282,6 +282,23 @@ export default async function ProfessionalsPage() {
                             />
                           </span>
 
+                          {/* La seña viaja siempre en el formulario, aunque esté
+                              vacía: si no se enviara, guardar cualquier otro
+                              cambio del servicio la borraría. */}
+                          <span className="flex items-center gap-1">
+                            <span className="text-xs text-ink-muted">Seña $</span>
+                            <input
+                              name="depositAmount"
+                              type="number"
+                              defaultValue={service.depositAmount ?? ""}
+                              min={0}
+                              step="0.01"
+                              className="input w-24 py-1 text-sm tabular"
+                              aria-label="Seña a pagar online (opcional)"
+                              placeholder="—"
+                            />
+                          </span>
+
                           <label className="flex items-center gap-1.5 text-xs">
                             <input
                               type="checkbox"
@@ -352,6 +369,21 @@ export default async function ProfessionalsPage() {
                       <input
                         id={`new-price-${person.id}`}
                         name="price"
+                        type="number"
+                        className="input w-28 tabular"
+                        min={0}
+                        step="0.01"
+                        placeholder="Opcional"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="field-label" htmlFor={`new-deposit-${person.id}`}>
+                        Seña
+                      </label>
+                      <input
+                        id={`new-deposit-${person.id}`}
+                        name="depositAmount"
                         type="number"
                         className="input w-28 tabular"
                         min={0}

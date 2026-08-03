@@ -49,6 +49,15 @@ export const services = sqliteTable(
     durationMinutes: integer("duration_minutes").notNull(),
     /** Opcional: si es null no se muestra precio en ninguna pantalla. */
     price: real("price"),
+    /**
+     * Cuánto se cobra por adelantado para tomar este turno, en pesos.
+     *
+     * NULL o 0 = sin seña: el turno se confirma en el momento, sin pasar por
+     * ningún cobro. Es el valor de todos los servicios que ya existen, así que
+     * encender Mercado Pago no empieza a cobrar nada hasta que se cargue un
+     * monto acá. Ver src/lib/payments.ts.
+     */
+    depositAmount: real("deposit_amount"),
     active: integer("active", { mode: "boolean" }).notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
     /**
@@ -133,8 +142,29 @@ export const appointments = sqliteTable(
     date: text("date").notNull(),
     startMinute: integer("start_minute").notNull(),
     endMinute: integer("end_minute").notNull(),
+    /**
+     * Estado del turno.
+     *
+     *   booked             confirmado. Es el único estado con el que se atiende
+     *                      a alguien, y el que ocupa el horario de verdad.
+     *   pending_payment    pre-reserva: el horario está retenido mientras la
+     *                      clienta paga la seña en Mercado Pago. Se confirma
+     *                      cuando el pago se aprueba.
+     *   expired_payment    la pre-reserva venció sin pago. El horario ya está
+     *                      libre; la fila queda como registro.
+     *   cancelled_by_*     cancelado, por la clienta o desde el local.
+     *
+     * Solo hay dos estados que retienen el horario: 'booked' y una
+     * 'pending_payment' que todavía no venció. Ver `occupiesSlot`.
+     */
     status: text("status", {
-      enum: ["booked", "cancelled_by_client", "cancelled_by_admin"],
+      enum: [
+        "booked",
+        "pending_payment",
+        "expired_payment",
+        "cancelled_by_client",
+        "cancelled_by_admin",
+      ],
     })
       .notNull()
       .default("booked"),
@@ -153,6 +183,20 @@ export const appointments = sqliteTable(
       .notNull()
       .default(sql`(unixepoch())`),
     cancelledAt: integer("cancelled_at"),
+
+    /* ── Cobro de la seña ─────────────────────────────────────────────
+     * Todo esto queda en NULL cuando el turno no se cobró online, que es el
+     * caso de siempre mientras Mercado Pago esté apagado.
+     */
+    /** Lo que se cobró por este turno. Copia del servicio al momento de reservar. */
+    depositAmount: real("deposit_amount"),
+    mpPreferenceId: text("mp_preference_id"),
+    /** El link de pago ya creado, para que reintentar no cree otra preferencia. */
+    mpCheckoutUrl: text("mp_checkout_url"),
+    mpPaymentId: text("mp_payment_id"),
+    paidAt: integer("paid_at"),
+    /** Hasta cuándo la pre-reserva retiene el horario (timestamp unix). */
+    holdExpiresAt: integer("hold_expires_at"),
   },
   (t) => [
     uniqueIndex("appointments_cancel_token_idx").on(t.cancelTokenHash),

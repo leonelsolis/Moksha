@@ -140,6 +140,22 @@ export function formatMinute(minute: number) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+/**
+ * Un instante concreto, como hora del negocio: 1754251200 → "15:40".
+ *
+ * Es para los vencimientos, que sí son timestamps unix: a diferencia de un
+ * turno, "hasta las 15:40" es un momento del reloj real y hay que expresarlo en
+ * la zona horaria del negocio, no en la del servidor.
+ */
+export function formatTimestamp(seconds: number, timeZone: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(seconds * 1000));
+}
+
 /** "09:30" → 570. Devuelve null si no es una hora válida. */
 export function parseMinute(value: string): number | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());

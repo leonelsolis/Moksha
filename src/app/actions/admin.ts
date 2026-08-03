@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -92,17 +92,29 @@ export async function cancelAppointmentAsAdmin(
 
   if (!appointment) return error("Turno no encontrado.");
 
+  // Una pre-reserva esperando el pago de la seña también se puede soltar: está
+  // ocupando el horario igual que un turno confirmado.
   const result = await db
     .update(appointments)
     .set({
       status: "cancelled_by_admin",
       cancelledAt: Math.floor(Date.now() / 1000),
+      holdExpiresAt: null,
     })
-    .where(and(eq(appointments.id, id), eq(appointments.status, "booked")));
+    .where(
+      and(
+        eq(appointments.id, id),
+        inArray(appointments.status, ["booked", "pending_payment"]),
+      ),
+    );
 
   if (result.rowsAffected === 0) return error("Ese turno ya estaba cancelado.");
 
-  await notifyProfessionalCancellation(appointment, "admin");
+  // De una pre-reserva sin pagar nunca se avisó nada, así que tampoco se avisa
+  // de su cancelación.
+  if (appointment.status === "booked") {
+    await notifyProfessionalCancellation(appointment, "admin");
+  }
 
   refreshAll();
   return ok("Turno cancelado. El horario quedó libre.");
@@ -291,6 +303,7 @@ export async function saveService(
   const name = String(formData.get("name") ?? "").trim();
   const duration = Number(formData.get("durationMinutes"));
   const rawPrice = String(formData.get("price") ?? "").trim();
+  const rawDeposit = String(formData.get("depositAmount") ?? "").trim();
   const active = formData.get("active") === "on";
 
   if (!professionalId) return error("Profesional no encontrada.");
@@ -305,11 +318,27 @@ export async function saveService(
     return error("El precio no es válido.");
   }
 
+  /*
+   * La seña que hay que pagar online para tomar este servicio. Vacío o 0
+   * significa que no se cobra nada: el turno se confirma en el momento. Solo
+   * tiene efecto con Mercado Pago encendido en Ajustes; con el cobro apagado,
+   * el monto queda cargado y no se le pide nada a nadie.
+   */
+  const deposit = rawDeposit ? Number(rawDeposit.replace(",", ".")) : null;
+  if (deposit !== null && (!Number.isFinite(deposit) || deposit < 0)) {
+    return error("La seña no es válida.");
+  }
+
+  if (deposit !== null && price !== null && deposit > price) {
+    return error("La seña no puede ser mayor que el precio del servicio.");
+  }
+
   const values = {
     professionalId,
     name,
     durationMinutes: Math.round(duration),
     price,
+    depositAmount: deposit,
     active,
   };
 

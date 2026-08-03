@@ -46,6 +46,12 @@ export const SETTING_DEFAULTS = {
    * Ver src/lib/mercadopago.ts.
    */
   mp_enabled: "false",
+  /**
+   * Cuántos minutos se retiene el horario mientras la clienta paga la seña.
+   * Vencido el plazo, la pre-reserva se descarta y el horario vuelve a estar
+   * disponible. Ver src/lib/payments.ts.
+   */
+  mp_hold_minutes: "30",
 } as const;
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS;

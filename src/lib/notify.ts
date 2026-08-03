@@ -5,14 +5,19 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { adminUsers, professionals } from "@/db/schema";
 import {
+  sendBookingConfirmation,
   sendProfessionalBookingNotice,
   sendProfessionalCancellationNotice,
   type ProfessionalNoticeData,
 } from "./email";
+import { siteOrigin } from "./site-url";
 import { isValidEmail, normalizeEmail } from "./validation";
 
 /**
- * Avisos a la profesional cuando le mueven la agenda.
+ * Los avisos de un turno: a la clienta y a la profesional.
+ *
+ * El grueso del archivo son los de la profesional, que son los que necesitan
+ * resolver a dónde mandarlos.
  *
  * El destinatario no se configura en ningún lado: es el email de contacto de
  * las cuentas del panel vinculadas a esa profesional. Así, cambiar a quién le
@@ -114,6 +119,40 @@ export async function notifyProfessionalNewBooking(appointment: AppointmentNotic
   } catch (e) {
     console.warn("[email] falló el aviso de turno nuevo:", e);
   }
+}
+
+/**
+ * Todo lo que se manda cuando un turno queda confirmado: el mail con el link a
+ * la clienta y el aviso a la profesional.
+ *
+ * Está junto porque hay dos momentos en los que un turno se confirma —al
+ * reservar sin cobro, y cuando se aprueba la seña— y los dos tienen que avisar
+ * lo mismo. Nada de acá puede hacer fallar la confirmación: el turno ya está
+ * guardado y la clienta ve el link en pantalla.
+ */
+export async function announceNewBooking(options: {
+  appointment: AppointmentNotice;
+  professionalName: string;
+  /** Token en claro, para armar el link de la clienta. */
+  token: string;
+}) {
+  const { appointment, professionalName, token } = options;
+
+  const mail = await sendBookingConfirmation({
+    to: appointment.email,
+    firstName: appointment.firstName,
+    professionalName,
+    serviceName: appointment.serviceName,
+    date: appointment.date,
+    startMinute: appointment.startMinute,
+    manageUrl: `${await siteOrigin()}/turno/${token}`,
+  }).catch((e) => ({ sent: false, reason: String(e) }));
+
+  if (!mail.sent) {
+    console.warn("[email] no se envió la confirmación:", mail.reason);
+  }
+
+  await notifyProfessionalNewBooking(appointment);
 }
 
 export async function notifyProfessionalCancellation(
