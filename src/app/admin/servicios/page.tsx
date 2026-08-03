@@ -12,7 +12,7 @@ import { professionalScope, requireUser } from "@/lib/auth";
 import { SERVICE_DESCRIPTION_MAX } from "@/lib/validation";
 
 /**
- * La ficha pública de cada servicio: qué es y su foto.
+ * La ficha pública de cada servicio: qué es, su foto y su precio.
  *
  * Es la única pantalla de configuración que comparten los dos roles. Cada
  * profesional entra y ve solo sus servicios; la administración los ve todos,
@@ -20,8 +20,10 @@ import { SERVICE_DESCRIPTION_MAX } from "@/lib/validation";
  * acciones vuelven a aplicar el alcance por su cuenta, porque un server action
  * es un endpoint propio al que se puede llamar sin pasar por acá.
  *
- * El alta de servicios (nombre, duración, precio) no está en esta pantalla:
- * eso define el negocio y vive en Profesionales, solo para la administración.
+ * El precio se edita acá, junto al resto de lo que se muestra en la web, pero
+ * solo la administración lo ve editable: para una profesional sigue siendo un
+ * dato de lectura. El alta de servicios (nombre y duración) tampoco está acá:
+ * eso define el negocio y vive en Profesionales.
  */
 
 export const dynamic = "force-dynamic";
@@ -71,12 +73,12 @@ export default async function ServicesPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Servicios</h1>
         <p className="mt-0.5 text-sm text-ink-soft">
-          Qué es cada servicio, en tus palabras. Aparece al costado cuando
-          alguien lo elige para sacar un turno.
+          Qué es cada servicio y cuánto sale. Aparece al costado cuando alguien
+          lo elige para sacar un turno.
           {isAdmin ? (
             <>
               {" "}
-              El nombre, la duración y el precio se cargan en{" "}
+              El nombre y la duración se cargan en{" "}
               <Link
                 href="/admin/profesionales"
                 className="underline underline-offset-4"
@@ -114,9 +116,12 @@ export default async function ServicesPage() {
                 <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                   <h3 className="text-sm font-medium">{service.name}</h3>
 
+                  {/* Para la administración el precio está justo abajo, en su
+                      campo; repetirlo acá solo daría dos números que se
+                      contradicen mientras se edita. */}
                   <span className="text-xs tabular text-ink-muted">
                     {service.durationMinutes} min
-                    {service.price != null
+                    {!isAdmin && service.price != null
                       ? ` · $${service.price.toLocaleString("es-AR")}`
                       : ""}
                   </span>
@@ -147,6 +152,44 @@ export default async function ServicesPage() {
 
                 <ActionForm action={saveServiceInfo} className="space-y-3">
                   <input type="hidden" name="id" value={service.id} />
+
+                  {/*
+                    El precio viaja siempre en el formulario, aunque esté vacío:
+                    si no se enviara, guardar la ficha lo borraría. Vacío
+                    significa "sin precio" y es la manera de sacarlo de la web.
+
+                    Solo para la administración. La acción vuelve a comprobar el
+                    rol: que el campo no se dibuje no impide mandarlo a mano.
+                  */}
+                  {isAdmin ? (
+                    <div>
+                      <label
+                        className="field-label"
+                        htmlFor={`precio-${service.id}`}
+                      >
+                        Precio
+                      </label>
+
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-sm text-ink-muted">$</span>
+                        <input
+                          id={`precio-${service.id}`}
+                          name="price"
+                          type="number"
+                          className="input w-36 tabular"
+                          defaultValue={service.price ?? ""}
+                          min={0}
+                          step="0.01"
+                          placeholder="Sin precio"
+                        />
+                      </div>
+
+                      <p className="mt-1.5 text-xs text-ink-muted">
+                        Se muestra junto al servicio al reservar. Si lo dejás
+                        vacío no se muestra ningún precio.
+                      </p>
+                    </div>
+                  ) : null}
 
                   <div>
                     <label

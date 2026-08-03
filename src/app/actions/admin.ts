@@ -23,6 +23,7 @@ import { isValidDateString, parseMinute } from "@/lib/dates";
 import { sendTestEmail } from "@/lib/email";
 import { checkMercadoPagoToken, mercadoPagoToken } from "@/lib/mercadopago";
 import { notifyProfessionalCancellation } from "@/lib/notify";
+import { formatMoney } from "@/lib/payments";
 import { updateSettings, type SettingKey, type Settings } from "@/lib/settings";
 import {
   isValidEmail,
@@ -376,11 +377,16 @@ export async function deleteService(
 }
 
 /**
- * La ficha del servicio: qué es y si su foto se muestra.
+ * La ficha del servicio: qué es, si su foto se muestra y cuánto sale.
  *
- * Es lo único de un servicio que NO exige ser administración. La duración, el
- * precio o el nombre definen el negocio y los fija la dueña; la explicación de
- * qué es un kapping la escribe quien lo hace.
+ * Es lo único de un servicio que NO exige ser administración. La duración y el
+ * nombre definen el negocio y los fija la dueña; la explicación de qué es un
+ * kapping la escribe quien lo hace.
+ *
+ * El precio es el caso mixto: se edita en esta pantalla por comodidad —es lo
+ * primero que se cambia y estaba a dos clics de distancia— pero sigue siendo
+ * cosa de la administración. Para una profesional el campo ni se dibuja, y si
+ * igual llegara en el formulario se ignora acá, que es lo único que cuenta.
  *
  * El aislamiento no se comprueba leyendo la fila antes: la condición de alcance
  * va en el WHERE, así el id de un servicio ajeno no afecta ninguna fila y la
@@ -404,9 +410,45 @@ export async function saveServiceInfo(
   // también lo deja apagado, que es lo correcto.
   const showPhoto = formData.get("showPhoto") === "on";
 
+  const values: Partial<typeof services.$inferInsert> = { description, showPhoto };
+
+  if (user.role === "admin") {
+    const rawPrice = String(formData.get("price") ?? "").trim();
+    const price = rawPrice ? Number(rawPrice.replace(",", ".")) : null;
+
+    if (price !== null && (!Number.isFinite(price) || price < 0)) {
+      return error("El precio no es válido.");
+    }
+
+    /*
+     * La misma regla que en Profesionales: la seña no puede terminar por encima
+     * del precio. Acá el precio es lo que cambia y la seña lo que ya estaba
+     * cargado, así que hay que leerla para poder comparar.
+     */
+    if (price !== null) {
+      const [current] = await db
+        .select({ depositAmount: services.depositAmount })
+        .from(services)
+        .where(eq(services.id, id))
+        .limit(1);
+
+      if (!current) return error("Servicio no encontrado.");
+
+      if (current.depositAmount !== null && current.depositAmount > price) {
+        return error(
+          `Este servicio tiene una seña de ${formatMoney(current.depositAmount)}. ` +
+            "Bajala en Profesionales o poné un precio mayor.",
+        );
+      }
+    }
+
+    // Vacío borra el precio a propósito: es cómo se vuelve a "sin precio".
+    values.price = price;
+  }
+
   const result = await db
     .update(services)
-    .set({ description, showPhoto })
+    .set(values)
     .where(withScope(user, services.professionalId, eq(services.id, id)));
 
   if (result.rowsAffected === 0) return error("Servicio no encontrado.");
