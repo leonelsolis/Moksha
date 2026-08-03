@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { saveSettings, sendTestEmailAction } from "@/app/actions/admin";
 import { removeLogo, uploadLogo } from "@/app/actions/photos";
 import { Alert } from "@/components/Alert";
@@ -5,6 +7,7 @@ import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
 import { ImageUpload } from "@/components/admin/ImageUpload";
 import { requireAdmin } from "@/lib/auth";
 import { emailConfig } from "@/lib/email";
+import { mercadoPagoConfig } from "@/lib/mercadopago";
 import { getSettings, settingBool } from "@/lib/settings";
 
 /**
@@ -24,6 +27,7 @@ export default async function SettingsPage() {
 
   const settings = await getSettings();
   const mail = emailConfig(settings);
+  const mp = mercadoPagoConfig(settings);
 
   return (
     <div className="space-y-5">
@@ -365,6 +369,22 @@ export default async function SettingsPage() {
         </div>
       </section>
 
+      {/* Los cobros se configuran en su propia pantalla; acá queda el atajo
+          porque es donde la mayoría los va a buscar. */}
+      <section className="panel flex flex-wrap items-center justify-between gap-3 p-4">
+        <div className="min-w-0">
+          <h2 className="text-sm font-medium">Señas y cobros online</h2>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            {mp.ready
+              ? "Se está cobrando la seña con Mercado Pago al reservar."
+              : "Los pagos y señas están desactivados: los turnos se confirman sin seña."}
+          </p>
+        </div>
+
+        <Link href="/admin/depositos" className="btn btn-secondary btn-sm">
+          Configurar cobros
+        </Link>
+      </section>
     </div>
   );
 }

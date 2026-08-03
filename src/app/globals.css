@@ -176,6 +176,14 @@
     box-shadow: 0 0 0 3px var(--color-accent-soft);
   }
 
+  /* Un campo apagado tiene que verse apagado: si no, se escribe encima y
+     recién al guardar se descubre que el valor no viajó. */
+  .input:disabled {
+    background-color: var(--color-surface-sunken);
+    color: var(--color-ink-muted);
+    cursor: not-allowed;
+  }
+
   .input[aria-invalid="true"] {
     border-color: var(--color-danger);
   }

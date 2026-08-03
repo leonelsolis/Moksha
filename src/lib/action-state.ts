@@ -27,6 +27,14 @@ export const emptyBookingState: BookingState = {
   errors: {},
 };
 
+/**
+ * Reintento del pago de la seña. Cuando sale bien no hay estado que mostrar:
+ * la acción redirige al checkout de Mercado Pago.
+ */
+export type PaymentState = { ok: boolean; message: string | null };
+
+export const emptyPaymentState: PaymentState = { ok: false, message: null };
+
 export type CancelState = { ok: boolean; message: string | null };
 
 export const emptyCancelState: CancelState = { ok: false, message: null };

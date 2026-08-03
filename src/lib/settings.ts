@@ -37,6 +37,21 @@ export const SETTING_DEFAULTS = {
   /** Requiere dominio verificado en Resend. Ver README. */
   email_enabled: "false",
   email_from: "",
+
+  /** Cobros online ──────────────────────────────────────────────────── */
+  /**
+   * Interruptor global de Mercado Pago. Apagado por defecto: la web funciona
+   * completa sin cobro online, y recién cuando el cliente carga su
+   * MERCADOPAGO_ACCESS_TOKEN en el servidor y enciende esto empieza a cobrar.
+   * Ver src/lib/mercadopago.ts.
+   */
+  mp_enabled: "false",
+  /**
+   * Cuántos minutos se retiene el horario mientras la clienta paga la seña.
+   * Vencido el plazo, la pre-reserva se descarta y el horario vuelve a estar
+   * disponible. Ver src/lib/payments.ts.
+   */
+  mp_hold_minutes: "30",
 } as const;
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS;

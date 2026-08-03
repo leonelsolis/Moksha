@@ -14,8 +14,16 @@ import type { Client } from "@libsql/client";
  * Para cambiar el esquema: agregá una entrada NUEVA al final del array.
  * Nunca edites una que ya se publicó, porque las bases existentes ya la
  * aplicaron y no la volverían a ejecutar.
+ *
+ * Una entrada puede ser una función en vez de una lista fija. Se resuelve
+ * ANTES de abrir la transacción y tiene que devolver las sentencias a aplicar;
+ * sirve para lo que depende del estado de la base, como no repetir una columna
+ * que ya existe. Lo que devuelve se ejecuta igual que cualquier otra: todo
+ * junto o nada.
  */
-const MIGRATIONS: string[][] = [
+type Migration = string[] | ((client: Client) => Promise<string[]>);
+
+const MIGRATIONS: Migration[] = [
   // ── v1 · esquema inicial ────────────────────────────────────────────────
   [
     `CREATE TABLE IF NOT EXISTS professionals (
@@ -192,7 +200,124 @@ const MIGRATIONS: string[][] = [
     `ALTER TABLE services ADD COLUMN photo_url TEXT`,
     `ALTER TABLE services ADD COLUMN show_photo INTEGER NOT NULL DEFAULT 0`,
   ],
+
+  /**
+   * ── v5 y v6 · números quemados, a propósito vacíos ──────────────────────
+   *
+   * Un intento anterior de Mercado Pago (señas obligatorias) llegó a aplicar
+   * sus migraciones v5 y v6 en las bases de desarrollo antes de que ese
+   * trabajo se sacara de `main`. Esas bases tienen `_migrations` en 6, con
+   * columnas y tablas que el código actual ya no usa (`services.deposit_amount`,
+   * `appointments.mp_preference_id`, la tabla `mp_payments`).
+   *
+   * Los números no se pueden reciclar: una base que ya registró la 5 y la 6
+   * nunca las vuelve a ejecutar, así que si acá pusiéramos SQL nuevo con esos
+   * números, en esas bases no correría jamás y el error aparecería recién en
+   * producción. Quedan como entradas vacías —se registran sin ejecutar nada— y
+   * lo nuevo arranca en v7.
+   *
+   * Las columnas viejas se dejan donde están: están vacías, no molestan, y
+   * sacarlas es un movimiento aparte que no hace falta para esto.
+   */
+  [],
+  [],
+
+  // ── v7 · cobro online opcional (Mercado Pago) ───────────────────────────
+  [
+    /**
+     * Interruptor global de la integración con Mercado Pago.
+     *
+     * No hay columna nueva: `settings` es clave/valor, así que el flag es una
+     * fila más. La migración solo la deja creada para que exista en la base
+     * desde el minuto cero, en lugar de aparecer recién cuando alguien guarda
+     * Ajustes por primera vez.
+     *
+     * Arranca apagado a propósito. Sin token cargado en el servidor la web
+     * tiene que seguir funcionando exactamente como hasta ahora: se reserva el
+     * turno y no se cobra nada online.
+     *
+     * `INSERT OR IGNORE` hace que correr la migración sobre una base donde el
+     * cliente ya lo encendió no se lo apague de vuelta.
+     */
+    `INSERT OR IGNORE INTO settings (key, value) VALUES ('mp_enabled', 'false')`,
+  ],
+
+  // ── v8 · seña por servicio y pre-reserva a la espera del pago ───────────
+  async (client) => [
+    /**
+     * El monto de la seña vive en el servicio, no en Ajustes: una manicuría de
+     * $8.000 y un kapping de $25.000 no se señan igual. NULL o 0 significa "no
+     * se cobra nada online por este servicio", que es como quedan todos los
+     * servicios que ya existen: encender Mercado Pago no empieza a cobrar de
+     * golpe, hay que decir servicio por servicio cuánto se seña.
+     */
+    ...(await addColumns(client, "services", {
+      deposit_amount: "REAL",
+    })),
+
+    /**
+     * Lo que el turno guarda del cobro.
+     *
+     * `deposit_amount` se copia acá al reservar, igual que `service_name`: es
+     * lo que se cobró ese día, y tiene que seguir siendo cierto aunque después
+     * cambie el precio del servicio.
+     *
+     * `hold_expires_at` es hasta cuándo la pre-reserva retiene el horario. Sin
+     * esto, alguien que abre el checkout y cierra la pestaña dejaría el horario
+     * bloqueado para siempre.
+     */
+    ...(await addColumns(client, "appointments", {
+      deposit_amount: "REAL",
+      mp_preference_id: "TEXT",
+      mp_checkout_url: "TEXT",
+      mp_payment_id: "TEXT",
+      paid_at: "INTEGER",
+      hold_expires_at: "INTEGER",
+    })),
+
+    /**
+     * El índice antichoque ahora también cubre las pre-reservas.
+     *
+     * Mientras el horario está retenido esperando el pago no puede entrar otro
+     * turno encima, o dos personas pagarían la seña del mismo lugar. Las
+     * pre-reservas vencidas se pasan a 'expired_payment' antes de cada alta
+     * (ver `createBooking`), así una que quedó a medias no bloquea el horario
+     * para siempre.
+     */
+    `DROP INDEX IF EXISTS appointments_slot_unique`,
+    `CREATE UNIQUE INDEX appointments_slot_unique
+       ON appointments(professional_id, date, start_minute)
+       WHERE status IN ('booked', 'pending_payment')`,
+
+    /** Cuánto se le espera a alguien que se fue a pagar. */
+    `INSERT OR IGNORE INTO settings (key, value) VALUES ('mp_hold_minutes', '30')`,
+  ],
 ];
+
+/**
+ * ALTER TABLE ADD COLUMN de las que falten, nada más.
+ *
+ * SQLite no tiene "ADD COLUMN IF NOT EXISTS" y repetir una columna existente
+ * aborta la migración entera. Hace falta porque el intento anterior de Mercado
+ * Pago (ver la nota de v5 y v6) dejó algunas de estas columnas creadas en las
+ * bases de desarrollo: ahí hay que saltearlas, y en una base limpia hay que
+ * crearlas.
+ *
+ * Los nombres de columna se leen de un SELECT vacío y no de un PRAGMA, que es
+ * lo que funciona igual en el archivo local y en Turso.
+ */
+async function addColumns(
+  client: Client,
+  table: string,
+  columns: Record<string, string>,
+): Promise<string[]> {
+  const result = await client.execute(`SELECT * FROM ${table} LIMIT 0`);
+  const existing = new Set(result.columns);
+
+  return Object.entries(columns)
+    .filter(([name]) => !existing.has(name))
+    .map(([name, type]) => `ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+}
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
 
@@ -251,11 +376,14 @@ export async function runMigrations(client: Client): Promise<MigrationOutcome> {
   }
 
   for (let version = current; version < SCHEMA_VERSION; version++) {
+    const entry = MIGRATIONS[version];
+    const statements = typeof entry === "function" ? await entry(client) : entry;
+
     // `batch` con modo "write" corre todo el bloque en una transacción: o se
     // aplica la migración entera o no se aplica nada.
     await client.batch(
       [
-        ...MIGRATIONS[version],
+        ...statements,
         {
           sql: "INSERT INTO _migrations (version, applied_at) VALUES (?, unixepoch())",
           args: [version + 1],

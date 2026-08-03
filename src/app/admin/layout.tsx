@@ -40,6 +40,7 @@ const NAV: AdminNavItem[] = [
   },
   { href: "/admin/profesionales", label: "Profesionales", icon: "users", adminOnly: true },
   { href: "/admin/usuarios", label: "Usuarios", icon: "key", adminOnly: true },
+  { href: "/admin/depositos", label: "Señas", icon: "card", adminOnly: true },
   { href: "/admin/ajustes", label: "Ajustes", icon: "settings", adminOnly: true },
   { href: "/admin/cuenta", label: "Mi cuenta", icon: "lock", adminOnly: false },
 ];

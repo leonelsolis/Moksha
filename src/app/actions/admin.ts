@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -21,6 +21,7 @@ import {
 } from "@/lib/auth";
 import { isValidDateString, parseMinute } from "@/lib/dates";
 import { sendTestEmail } from "@/lib/email";
+import { checkMercadoPagoToken, mercadoPagoToken } from "@/lib/mercadopago";
 import { notifyProfessionalCancellation } from "@/lib/notify";
 import { updateSettings, type SettingKey, type Settings } from "@/lib/settings";
 import {
@@ -69,6 +70,8 @@ function refreshAll() {
   revalidatePath("/admin/horarios");
   revalidatePath("/admin/profesionales");
   revalidatePath("/admin/servicios");
+  // Lista las señas de cada servicio, así que cambia al editar un servicio.
+  revalidatePath("/admin/depositos");
 }
 
 /* ── Turnos ─────────────────────────────────────────────────────────── */
@@ -92,17 +95,29 @@ export async function cancelAppointmentAsAdmin(
 
   if (!appointment) return error("Turno no encontrado.");
 
+  // Una pre-reserva esperando el pago de la seña también se puede soltar: está
+  // ocupando el horario igual que un turno confirmado.
   const result = await db
     .update(appointments)
     .set({
       status: "cancelled_by_admin",
       cancelledAt: Math.floor(Date.now() / 1000),
+      holdExpiresAt: null,
     })
-    .where(and(eq(appointments.id, id), eq(appointments.status, "booked")));
+    .where(
+      and(
+        eq(appointments.id, id),
+        inArray(appointments.status, ["booked", "pending_payment"]),
+      ),
+    );
 
   if (result.rowsAffected === 0) return error("Ese turno ya estaba cancelado.");
 
-  await notifyProfessionalCancellation(appointment, "admin");
+  // De una pre-reserva sin pagar nunca se avisó nada, así que tampoco se avisa
+  // de su cancelación.
+  if (appointment.status === "booked") {
+    await notifyProfessionalCancellation(appointment, "admin");
+  }
 
   refreshAll();
   return ok("Turno cancelado. El horario quedó libre.");
@@ -291,6 +306,7 @@ export async function saveService(
   const name = String(formData.get("name") ?? "").trim();
   const duration = Number(formData.get("durationMinutes"));
   const rawPrice = String(formData.get("price") ?? "").trim();
+  const rawDeposit = String(formData.get("depositAmount") ?? "").trim();
   const active = formData.get("active") === "on";
 
   if (!professionalId) return error("Profesional no encontrada.");
@@ -305,11 +321,27 @@ export async function saveService(
     return error("El precio no es válido.");
   }
 
+  /*
+   * La seña que hay que pagar online para tomar este servicio. Vacío o 0
+   * significa que no se cobra nada: el turno se confirma en el momento. Solo
+   * tiene efecto con Mercado Pago encendido en Ajustes; con el cobro apagado,
+   * el monto queda cargado y no se le pide nada a nadie.
+   */
+  const deposit = rawDeposit ? Number(rawDeposit.replace(",", ".")) : null;
+  if (deposit !== null && (!Number.isFinite(deposit) || deposit < 0)) {
+    return error("La seña no es válida.");
+  }
+
+  if (deposit !== null && price !== null && deposit > price) {
+    return error("La seña no puede ser mayor que el precio del servicio.");
+  }
+
   const values = {
     professionalId,
     name,
     durationMinutes: Math.round(duration),
     price,
+    depositAmount: deposit,
     active,
   };
 
@@ -603,9 +635,16 @@ const EDITABLE_SETTINGS: SettingKey[] = [
   "allow_client_lookup",
   "email_enabled",
   "email_from",
+  // Los cobros NO están acá: tienen su propia pantalla y su propia acción
+  // (`saveDepositSettings`). Si estuvieran, guardar Ajustes —que no dibuja el
+  // interruptor— apagaría el cobro sin que nadie lo pidiera: un checkbox que
+  // no se envía se guarda como "false".
 ];
 
-const CHECKBOX_SETTINGS: SettingKey[] = ["allow_client_lookup", "email_enabled"];
+const CHECKBOX_SETTINGS: SettingKey[] = [
+  "allow_client_lookup",
+  "email_enabled",
+];
 
 export async function saveSettings(
   _prev: ActionState,
@@ -681,4 +720,89 @@ export async function sendTestEmailAction(
   return result.sent
     ? ok(`Enviado a ${to}. Si no aparece en unos minutos, revisá el correo no deseado.`)
     : error(result.reason ?? "No se pudo enviar.");
+}
+
+/* ── Señas y cobros ─────────────────────────────────────────────────── */
+
+/**
+ * El interruptor de los cobros, aparte del resto de los ajustes.
+ *
+ * Está separado a propósito: prender o apagar el cobro es la decisión más
+ * visible del panel —cambia lo que le pasa a cada persona que reserva— y no
+ * tiene que viajar mezclada con el teléfono del local en el mismo formulario.
+ *
+ * Guardarlo nunca rompe una reserva en curso. Las pre-reservas que quedaron
+ * esperando el pago se vuelven a evaluar con esta configuración cuando la
+ * clienta reintenta (ver `resumeDepositCheckout`): si se apagó el cobro en el
+ * medio, su turno se confirma sin cobrar en vez de quedar trabado.
+ */
+export async function saveDepositSettings(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const enabled = formData.get("mp_enabled") === "on";
+
+  /*
+   * Con el cobro apagado el campo va deshabilitado y el navegador no lo manda.
+   * En ese caso no se toca el valor guardado, así el plazo que había vuelve
+   * intacto cuando se vuelve a encender.
+   */
+  const rawHold = formData.get("mp_hold_minutes");
+  const values: Partial<Settings> = { mp_enabled: enabled ? "true" : "false" };
+
+  if (rawHold !== null) {
+    const minutes = Number(String(rawHold).trim());
+    if (!Number.isFinite(minutes) || minutes < 5 || minutes > 1440) {
+      return error(
+        "El plazo para pagar la seña tiene que estar entre 5 minutos y 24 horas (1440).",
+      );
+    }
+    values.mp_hold_minutes = String(Math.round(minutes));
+  }
+
+  await updateSettings(values);
+
+  refreshAll();
+  revalidatePath("/admin/depositos");
+
+  if (!enabled) {
+    return ok(
+      "Cobros desactivados. Los turnos se confirman en el momento, sin seña.",
+    );
+  }
+
+  // Encender el interruptor sin token no cobra nada. Se dice acá y no solo en
+  // el aviso de la pantalla, porque el mensaje de guardado es lo que se lee.
+  return mercadoPagoToken() === null
+    ? ok(
+        "Guardado, pero todavía no se cobra: falta cargar MERCADOPAGO_ACCESS_TOKEN en el servidor.",
+      )
+    : ok("Cobros activados. Se pide la seña antes de confirmar el turno.");
+}
+
+/**
+ * Prueba de credenciales. Le pregunta a Mercado Pago de quién es el token, sin
+ * generar ningún cobro, y funciona con el interruptor apagado: sirve para
+ * verificar la configuración antes de encenderla.
+ */
+export async function testMercadoPagoAction(
+  _prev: ActionState,
+  _formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const result = await checkMercadoPagoToken();
+  if (!result.ok) return error(result.reason);
+
+  const account = result.data.nickname || result.data.email || "la cuenta";
+
+  return ok(
+    `Conectado con Mercado Pago (${account}). El token es válido${
+      mercadoPagoToken()?.startsWith("TEST-")
+        ? " y es de prueba: los pagos no son reales."
+        : "."
+    }`,
+  );
 }

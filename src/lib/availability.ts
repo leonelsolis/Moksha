@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, gte, inArray, lte, ne, or } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, lte, ne, or } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -31,6 +31,30 @@ import { getSettings, settingInt, type Settings } from "./settings";
  *   5. Se descartan los que se solapan con un turno ya reservado.
  *   6. Se descartan los que ya pasaron o no cumplen la antelación mínima.
  */
+
+/**
+ * Qué turnos retienen un horario.
+ *
+ * Son dos: los confirmados y las pre-reservas que todavía están esperando el
+ * pago de la seña. Que una pre-reserva ocupe el lugar es justamente el punto:
+ * mientras alguien está pagando, ese horario no puede aparecer libre, o dos
+ * personas pagarían por el mismo.
+ *
+ * La retención tiene vencimiento (`hold_expires_at`). Pasado ese momento, la
+ * pre-reserva deja de contar acá sin necesidad de que nadie la limpie: quien
+ * abrió el checkout y cerró la pestaña no bloquea el horario para siempre.
+ * `hold_expires_at` en NULL nunca es mayor que la hora actual, así que una fila
+ * vieja sin ese dato tampoco retiene nada.
+ */
+export function occupiesSlot(now = Math.floor(Date.now() / 1000)) {
+  return or(
+    eq(appointments.status, "booked"),
+    and(
+      eq(appointments.status, "pending_payment"),
+      gt(appointments.holdExpiresAt, now),
+    ),
+  );
+}
 
 export type SlotStatus = "available" | "taken" | "past";
 
@@ -105,7 +129,7 @@ async function loadContext(
         .where(
           and(
             eq(appointments.professionalId, professional.id),
-            eq(appointments.status, "booked"),
+            occupiesSlot(),
             gte(appointments.date, fromDate),
             lte(appointments.date, toDate),
           ),
@@ -382,7 +406,7 @@ export async function conflictingAppointmentIds(options: {
       and(
         eq(appointments.professionalId, options.professionalId),
         eq(appointments.date, options.date),
-        eq(appointments.status, "booked"),
+        occupiesSlot(),
         options.excludeId ? ne(appointments.id, options.excludeId) : undefined,
         or(
           // Solapamiento: empieza antes de que el otro termine y termina después

@@ -160,6 +160,14 @@ const PATHS = {
       <line x1="8" y1="8" x2="8.1" y2="8" />
     </>
   ),
+  /** Tarjeta: el cobro de la seña online. */
+  card: (
+    <>
+      <rect x="2.75" y="5.25" width="18.5" height="13.5" rx="2" />
+      <line x1="2.75" y1="9.75" x2="21.25" y2="9.75" />
+      <line x1="6.25" y1="14.75" x2="9.75" y2="14.75" />
+    </>
+  ),
   /** Chinche: la dirección del local en el mapa. */
   pin: (
     <>

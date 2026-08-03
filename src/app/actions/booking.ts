@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { and, eq, gte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 
 import { client, db } from "@/db";
 import { appointments, professionals, services } from "@/db/schema";
@@ -14,14 +14,14 @@ import type {
 } from "@/lib/action-state";
 import { isSlotBookable } from "@/lib/availability";
 import { formatDateLong, formatMinute, minutesUntil, nowInTz } from "@/lib/dates";
-import { sendBookingConfirmation, sendCancellationConfirmation } from "@/lib/email";
+import { sendCancellationConfirmation } from "@/lib/email";
 import {
+  announceNewBooking,
   notifyProfessionalCancellation,
-  notifyProfessionalNewBooking,
 } from "@/lib/notify";
+import { createDepositCheckout, paymentPlanFor } from "@/lib/payments";
 import { checkRateLimit, clientKey } from "@/lib/rate-limit";
 import { getSettings, settingBool, settingInt } from "@/lib/settings";
-import { siteOrigin } from "@/lib/site-url";
 import { generateCancelToken, hashToken, looksLikeToken } from "@/lib/tokens";
 import {
   normalizeDni,
@@ -54,6 +54,19 @@ function fail(message: string, errors: FieldErrors = {}): BookingState {
  *   2. El índice único parcial de la tabla es la red de seguridad: aunque un
  *      error de código saltee lo anterior, la base rechaza un segundo turno
  *      con el mismo inicio exacto.
+ *
+ * De acá salen dos finales distintos, y cuál es lo decide `paymentPlanFor`:
+ *
+ *   · Sin cobro (Mercado Pago apagado, sin token, o servicio sin seña): el
+ *     turno nace confirmado, se manda el mail y se va a la pantalla del turno.
+ *     Es el camino de siempre y el que corre de fábrica.
+ *
+ *   · Con cobro: el turno nace como pre-reserva ('pending_payment'), retiene el
+ *     horario un rato y la clienta se va al checkout de Mercado Pago. Recién
+ *     con el pago aprobado pasa a confirmado.
+ *
+ * Que el cobro esté mal configurado o que Mercado Pago no conteste no rompe
+ * ninguna reserva: en cualquiera de esos casos se termina por el primer camino.
  */
 export async function createBooking(
   _prev: BookingState,
@@ -126,24 +139,48 @@ export async function createBooking(
   const { token, hash } = generateCancelToken();
 
   /*
-   * La condición `NOT EXISTS` compara el rango pedido contra los turnos ya
-   * reservados: hay choque si el nuevo empieza antes de que termine el otro y
-   * termina después de que el otro empieza. Si algo se solapa, el SELECT no
-   * devuelve filas y el INSERT no inserta nada.
+   * ¿Este turno se cobra?
+   *
+   * `paymentPlanFor` mira las tres condiciones juntas —interruptor encendido,
+   * token cargado en el servidor y seña cargada en este servicio— y nunca
+   * lanza: ante cualquier duda contesta que no se cobra. Por eso no hace falta
+   * envolver nada en try/catch acá: con Mercado Pago apagado, mal configurado o
+   * caído, la reserva sigue por el camino de siempre.
    */
-  let created = false;
+  const plan = await paymentPlanFor(service, settings);
+
+  const now = Math.floor(Date.now() / 1000);
+  const holdExpiresAt = plan.charge ? now + plan.holdMinutes * 60 : null;
+  const depositAmount = plan.charge ? plan.amount : null;
+
+  // Las pre-reservas vencidas de ese día se dan de baja antes de intentar el
+  // alta: el índice único cuenta a las 'pending_payment', así que una que quedó
+  // a medias bloquearía el horario aunque su retención ya no valga.
+  await releaseExpiredHolds(professionalId, date, now);
+
+  /*
+   * La condición `NOT EXISTS` compara el rango pedido contra los turnos que
+   * retienen el horario —confirmados y pre-reservas todavía vigentes—: hay
+   * choque si el nuevo empieza antes de que termine el otro y termina después
+   * de que el otro empieza. Si algo se solapa, el SELECT no devuelve filas y el
+   * INSERT no inserta nada.
+   */
+  let appointmentId: number | null = null;
   try {
     const result = await client.execute({
       sql: `INSERT INTO appointments
               (professional_id, service_id, service_name, date, start_minute,
                end_minute, status, first_name, last_name, dni, email, phone,
-               cancel_token_hash, created_at)
-            SELECT ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?, unixepoch()
+               cancel_token_hash, deposit_amount, hold_expires_at, created_at)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch()
             WHERE NOT EXISTS (
               SELECT 1 FROM appointments
-               WHERE professional_id = ? AND date = ? AND status = 'booked'
+               WHERE professional_id = ? AND date = ?
+                 AND (status = 'booked'
+                      OR (status = 'pending_payment' AND hold_expires_at > ?))
                  AND start_minute < ? AND end_minute > ?
-            )`,
+            )
+            RETURNING id`,
       args: [
         professionalId,
         service.id,
@@ -151,62 +188,105 @@ export async function createBooking(
         date,
         startMinute,
         endMinute,
+        plan.charge ? "pending_payment" : "booked",
         value.firstName,
         value.lastName,
         value.dni,
         value.email,
         value.phone,
         hash,
+        depositAmount,
+        holdExpiresAt,
         professionalId,
         date,
+        now,
         endMinute,
         startMinute,
       ],
     });
 
-    created = result.rowsAffected > 0;
+    appointmentId = result.rows.length > 0 ? Number(result.rows[0].id) : null;
   } catch {
     // Salta si el índice único parcial rechazó la inserción.
-    created = false;
+    appointmentId = null;
   }
 
-  if (!created) {
+  if (appointmentId === null) {
     return fail(
       "Ese horario acaba de ser reservado por otra persona. Elegí otro, por favor.",
     );
   }
 
-  // El envío puede fallar sin que eso invalide el turno: ya está guardado y el
-  // cliente ve el link en la pantalla siguiente. Igual queda anotado el motivo
-  // en los logs del servidor, que es lo único que explica un mail que no llegó.
-  const mail = await sendBookingConfirmation({
-    to: value.email,
-    firstName: value.firstName,
-    professionalName: professional.name,
-    serviceName: service.name,
-    date,
-    startMinute,
-    manageUrl: await buildManageUrl(token),
-  }).catch((e) => ({ sent: false, reason: String(e) }));
+  /*
+   * Camino con cobro: se pide el link de pago y se manda a la clienta al
+   * checkout. El turno queda retenido hasta que el pago se apruebe.
+   *
+   * Si Mercado Pago no contesta o rechaza la preferencia, la pre-reserva se
+   * confirma igual y sigue por el camino de abajo, sin cobro. Es a propósito:
+   * una seña que no se cobró se arregla cobrando en el local, pero una reserva
+   * que no se pudo hacer es una clienta perdida. Queda el motivo en los logs.
+   */
+  if (plan.charge) {
+    const checkout = await createDepositCheckout(
+      {
+        id: appointmentId,
+        email: value.email,
+        serviceName: service.name,
+        amount: plan.amount,
+        token,
+      },
+      settings,
+    );
 
-  if (!mail.sent) {
-    console.warn("[email] no se envió la confirmación:", mail.reason);
+    if (checkout.ok) {
+      await db
+        .update(appointments)
+        .set({
+          mpPreferenceId: checkout.data.preferenceId,
+          mpCheckoutUrl: checkout.data.url,
+        })
+        .where(eq(appointments.id, appointmentId));
+
+      revalidatePath("/");
+      revalidatePath("/admin");
+
+      redirect(checkout.data.url);
+    }
+
+    console.warn(
+      "[pagos] no se pudo abrir el checkout; el turno se confirma sin cobrar:",
+      checkout.reason,
+    );
+
+    await db
+      .update(appointments)
+      .set({
+        status: "booked",
+        depositAmount: null,
+        holdExpiresAt: null,
+      })
+      .where(eq(appointments.id, appointmentId));
   }
 
-  // Aviso a la profesional, al email de su cuenta del panel. Tampoco puede
-  // hacer fallar la reserva: `notifyProfessionalNewBooking` se traga sus
-  // propios errores.
-  await notifyProfessionalNewBooking({
-    professionalId,
-    date,
-    startMinute,
-    endMinute,
-    serviceName: service.name,
-    firstName: value.firstName,
-    lastName: value.lastName,
-    dni: value.dni,
-    email: value.email,
-    phone: value.phone,
+  // El mail a la clienta y el aviso a la profesional. Ninguno de los dos puede
+  // invalidar el turno: ya está guardado y la clienta ve el link en la pantalla
+  // siguiente. Lo que falle queda anotado en los logs del servidor, que es lo
+  // único que explica después un mail que no llegó.
+  await announceNewBooking({
+    appointment: {
+      professionalId,
+      date,
+      startMinute,
+      endMinute,
+      serviceName: service.name,
+      firstName: value.firstName,
+      lastName: value.lastName,
+      dni: value.dni,
+      email: value.email,
+      phone: value.phone,
+    },
+    professionalName: professional.name,
+    token,
   });
 
   revalidatePath("/");
@@ -215,8 +295,33 @@ export async function createBooking(
   redirect(`/turno/${token}?nuevo=1`);
 }
 
-async function buildManageUrl(token: string) {
-  return `${await siteOrigin()}/turno/${token}`;
+/**
+ * Da de baja las pre-reservas de ese día a las que se les venció el plazo de
+ * pago. El horario ya estaba libre para la disponibilidad —que ignora las
+ * retenciones vencidas—, pero la fila seguía ocupando el índice único, que no
+ * puede mirar la hora. Es una limpieza puntual, sobre un solo día y una sola
+ * profesional; no hace falta ningún proceso aparte.
+ *
+ * Si falla, no pasa nada: en el peor caso el alta choca contra el índice y la
+ * clienta ve el mismo mensaje que ante cualquier horario ya tomado.
+ */
+async function releaseExpiredHolds(
+  professionalId: number,
+  date: string,
+  now: number,
+) {
+  await db
+    .update(appointments)
+    .set({ status: "expired_payment" })
+    .where(
+      and(
+        eq(appointments.professionalId, professionalId),
+        eq(appointments.date, date),
+        eq(appointments.status, "pending_payment"),
+        lte(appointments.holdExpiresAt, now),
+      ),
+    )
+    .catch(() => undefined);
 }
 
 /**
@@ -250,8 +355,22 @@ export async function cancelBooking(
     return { ok: false, message: "No encontramos ese turno." };
   }
 
-  if (appointment.status !== "booked") {
-    return { ok: false, message: "Este turno ya estaba cancelado." };
+  /*
+   * Una pre-reserva sin pagar también se puede soltar desde acá: quien se
+   * arrepintió en el checkout no tiene por qué esperar a que venza el plazo
+   * para liberar el horario.
+   */
+  const wasConfirmed = appointment.status === "booked";
+  const isPending = appointment.status === "pending_payment";
+
+  if (!wasConfirmed && !isPending) {
+    return {
+      ok: false,
+      message:
+        appointment.status === "expired_payment"
+          ? "Esta reserva venció sin pagarse. Sacá un turno nuevo cuando quieras."
+          : "Este turno ya estaba cancelado.",
+    };
   }
 
   const settings = await getSettings();
@@ -280,27 +399,41 @@ export async function cancelBooking(
     .set({
       status: "cancelled_by_client",
       cancelledAt: Math.floor(Date.now() / 1000),
+      // La retención deja de tener sentido: el horario queda libre ya mismo.
+      holdExpiresAt: null,
     })
     .where(
-      and(eq(appointments.id, appointment.id), eq(appointments.status, "booked")),
+      and(
+        eq(appointments.id, appointment.id),
+        inArray(appointments.status, ["booked", "pending_payment"]),
+      ),
     );
 
-  await sendCancellationConfirmation({
-    to: appointment.email,
-    firstName: appointment.firstName,
-    date: appointment.date,
-    startMinute: appointment.startMinute,
-  }).catch(() => undefined);
+  // Los avisos son solo para los turnos que llegaron a confirmarse. De una
+  // pre-reserva sin pagar nunca se anunció nada: mandar ahora la cancelación de
+  // algo que la clienta no sabe que existía solo genera confusión.
+  if (wasConfirmed) {
+    await sendCancellationConfirmation({
+      to: appointment.email,
+      firstName: appointment.firstName,
+      date: appointment.date,
+      startMinute: appointment.startMinute,
+    }).catch(() => undefined);
 
-  await notifyProfessionalCancellation(appointment, "client");
+    await notifyProfessionalCancellation(appointment, "client");
+  }
 
   revalidatePath("/");
   revalidatePath(`/turno/${token}`);
   revalidatePath("/admin");
 
+  const when = `del ${formatDateLong(appointment.date)} a las ${formatMinute(appointment.startMinute)}`;
+
   return {
     ok: true,
-    message: `Cancelamos tu turno del ${formatDateLong(appointment.date)} a las ${formatMinute(appointment.startMinute)}.`,
+    message: wasConfirmed
+      ? `Cancelamos tu turno ${when}.`
+      : `Soltamos la reserva ${when}. No se te cobró nada.`,
   };
 }
 

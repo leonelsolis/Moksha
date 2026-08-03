@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, lte, type SQL } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
 
 import { Alert } from "@/components/Alert";
 import { AppointmentActions } from "@/components/admin/AppointmentActions";
@@ -13,6 +13,7 @@ import {
   isValidDateString,
   nowInTz,
 } from "@/lib/dates";
+import { holdIsAlive } from "@/lib/payments";
 import { getSettings } from "@/lib/settings";
 
 /**
@@ -39,6 +40,13 @@ type Props = {
     estado?: string;
   }>;
 };
+
+/** Qué decir de un turno que ya no ocupa su horario. */
+function statusLabel(status: string) {
+  if (status === "cancelled_by_admin") return "Cancelado por el local";
+  if (status === "cancelled_by_client") return "Cancelado por el cliente";
+  return "Seña no pagada";
+}
 
 export default async function AdminAppointmentsPage({ searchParams }: Props) {
   const account = await requireUser();
@@ -71,8 +79,12 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
   if (professionalFilter) {
     conditions.push(eq(appointments.professionalId, professionalFilter));
   }
+  // "Solo activos" incluye las pre-reservas que están esperando el pago de la
+  // seña: ocupan un horario de la agenda, así que tienen que verse.
   if (statusFilter === "booked") {
-    conditions.push(eq(appointments.status, "booked"));
+    conditions.push(
+      inArray(appointments.status, ["booked", "pending_payment"]),
+    );
   }
 
   const rows = await db
@@ -219,18 +231,22 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
               <ul className="space-y-2">
                 {items.map(({ appointment, professionalName }) => {
                   const isBooked = appointment.status === "booked";
+                  // La pre-reserva todavía retiene el horario: se muestra como
+                  // un turno más, con el aviso de que falta la seña.
+                  const isPending = holdIsAlive(appointment);
+                  const isActive = isBooked || isPending;
 
                   return (
                     <li
                       key={appointment.id}
-                      className={`panel p-3 sm:p-4 ${isBooked ? "" : "bg-surface-sunken"}`}
+                      className={`panel p-3 sm:p-4 ${isActive ? "" : "bg-surface-sunken"}`}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                             <span
                               className={`text-sm font-semibold tabular ${
-                                isBooked ? "" : "text-ink-muted line-through"
+                                isActive ? "" : "text-ink-muted line-through"
                               }`}
                             >
                               {formatMinute(appointment.startMinute)}–
@@ -247,18 +263,21 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
                               </span>
                             ) : null}
 
-                            {!isBooked ? (
+                            {isPending ? (
+                              <span className="badge border-warning-line bg-warning-soft text-warning">
+                                <Icon name="clock" className="size-3" />
+                                Falta pagar la seña
+                              </span>
+                            ) : !isBooked ? (
                               <span className="badge border-line-strong bg-surface text-ink-muted">
                                 <Icon name="slash" className="size-3" />
-                                {appointment.status === "cancelled_by_admin"
-                                  ? "Cancelado por el local"
-                                  : "Cancelado por el cliente"}
+                                {statusLabel(appointment.status)}
                               </span>
                             ) : null}
                           </div>
 
                           <p
-                            className={`mt-1.5 font-medium ${isBooked ? "" : "text-ink-muted"}`}
+                            className={`mt-1.5 font-medium ${isActive ? "" : "text-ink-muted"}`}
                           >
                             {appointment.firstName} {appointment.lastName}
                           </p>
@@ -286,7 +305,7 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
 
                         <AppointmentActions
                           id={appointment.id}
-                          isBooked={isBooked}
+                          canCancel={isActive}
                         />
                       </div>
                     </li>

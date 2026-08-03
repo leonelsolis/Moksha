@@ -6,10 +6,17 @@ import { Alert } from "@/components/Alert";
 import { Icon } from "@/components/Icon";
 import { LocationCard } from "@/components/public/LocationCard";
 import { ManageAppointment } from "@/components/public/ManageAppointment";
+import { PendingPayment } from "@/components/public/PendingPayment";
 import { SiteFooter, SiteHeader } from "@/components/public/SiteChrome";
 import { db } from "@/db";
 import { appointments, professionals } from "@/db/schema";
-import { formatDateLong, formatMinute, minutesUntil } from "@/lib/dates";
+import {
+  formatDateLong,
+  formatMinute,
+  formatTimestamp,
+  minutesUntil,
+} from "@/lib/dates";
+import { formatMoney, holdIsAlive } from "@/lib/payments";
 import { getSettings, settingInt } from "@/lib/settings";
 import { hashToken, looksLikeToken } from "@/lib/tokens";
 
@@ -34,12 +41,13 @@ export const metadata = { title: "Tu turno", robots: { index: false } };
 
 type Props = {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ nuevo?: string }>;
+  /** `pago` lo agrega Mercado Pago al volver del checkout. */
+  searchParams: Promise<{ nuevo?: string; pago?: string }>;
 };
 
 export default async function AppointmentPage({ params, searchParams }: Props) {
   const { token } = await params;
-  const { nuevo } = await searchParams;
+  const { nuevo, pago } = await searchParams;
 
   if (!looksLikeToken(token)) notFound();
 
@@ -60,6 +68,13 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
   const settings = await getSettings();
 
   const isBooked = appointment.status === "booked";
+  /** Pre-reserva viva: falta pagar la seña y el horario sigue retenido. */
+  const isPending = holdIsAlive(appointment);
+  /** Se venció el plazo de pago, con o sin la fila ya marcada. */
+  const isExpired =
+    appointment.status === "expired_payment" ||
+    (appointment.status === "pending_payment" && !isPending);
+
   const cutoffHours = settingInt(settings, "cancel_cutoff_hours");
   const remainingMinutes = minutesUntil(
     appointment.date,
@@ -87,6 +102,10 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
   // dirección cargada en Ajustes.
   const address = settings.contact_address.trim();
   const showMap = isBooked && address !== "";
+
+  // La pre-reserva no está cancelada: el horario sigue guardado. Se muestra con
+  // los datos a la vista, igual que un turno confirmado.
+  const isCancelled = !isBooked && !isPending && !isExpired;
 
   return (
     <>
@@ -118,11 +137,29 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
               </div>
             ) : (
               <h1 className="mb-5 text-xl font-semibold tracking-tight sm:text-2xl">
-                Tu turno
+                {isPending ? "Tu reserva" : "Tu turno"}
               </h1>
             )}
 
-            {!isBooked ? (
+            {isPending ? (
+              <div className="mb-5">
+                <Alert tone="warning" title="Falta pagar la seña">
+                  Te guardamos el horario, pero el turno queda confirmado recién
+                  cuando se acredite el pago.
+                </Alert>
+              </div>
+            ) : null}
+
+            {isExpired ? (
+              <div className="mb-5">
+                <Alert tone="info" title="Esta reserva venció">
+                  No llegamos a recibir el pago de la seña, así que el horario
+                  volvió a quedar disponible. No se te cobró nada.
+                </Alert>
+              </div>
+            ) : null}
+
+            {isCancelled ? (
               <div className="mb-5">
                 <Alert tone="info" title="Este turno está cancelado">
                   {appointment.status === "cancelled_by_admin"
@@ -132,7 +169,11 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
               </div>
             ) : null}
 
-            <section className={`panel p-4 sm:p-5 ${!isBooked ? "opacity-70" : ""}`}>
+            <section
+              className={`panel p-4 sm:p-5 ${
+                isBooked || isPending ? "" : "opacity-70"
+              }`}
+            >
               <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-3 text-sm">
                 <dt className="flex items-center gap-1.5 text-ink-muted">
                   <Icon name="calendar" className="size-4" />
@@ -176,10 +217,37 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
                 <dd>
                   {appointment.firstName} {appointment.lastName}
                 </dd>
+
+                {isPending && appointment.depositAmount ? (
+                  <>
+                    <dt className="text-ink-muted">Seña</dt>
+                    <dd className="font-medium tabular">
+                      {formatMoney(appointment.depositAmount)}
+                    </dd>
+                  </>
+                ) : null}
               </dl>
             </section>
 
-            {isBooked ? (
+            {isPending ? (
+              <div className="mt-5 space-y-4">
+                <PendingPayment
+                  token={token}
+                  amount={formatMoney(appointment.depositAmount ?? 0)}
+                  holdUntil={formatTimestamp(
+                    appointment.holdExpiresAt ?? 0,
+                    settings.timezone,
+                  )}
+                  awaitingApproval={pago === "ok" || pago === "pendiente"}
+                />
+
+                <ManageAppointment
+                  token={token}
+                  canCancel
+                  blockedReason={null}
+                />
+              </div>
+            ) : isBooked ? (
               <div className="mt-5">
                 <ManageAppointment
                   token={token}
