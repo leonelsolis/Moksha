@@ -41,6 +41,15 @@ export default async function LoginPage({
 
       <div className="panel p-5">
         <LoginForm returnTo={returnTo} />
+
+        <div className="mt-4 border-t border-line pt-3 text-center">
+          <Link
+            href="/admin/recuperar"
+            className="text-sm text-ink-soft underline-offset-4 hover:text-ink hover:underline"
+          >
+            Olvidé mi contraseña
+          </Link>
+        </div>
       </div>
 
       <Link

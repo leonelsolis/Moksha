@@ -31,6 +31,22 @@ export async function proxy(request: NextRequest) {
   // siempre, con sesión o sin ella: es la salida del rebote.
   if (pathname === "/admin/salir") return NextResponse.next();
 
+  /*
+   * La recuperación de contraseña es, por definición, para quien no puede
+   * iniciar sesión: si estas dos rutas pidieran sesión, el link del mail
+   * rebotaría al login y el flujo no serviría para nada. Lo que las protege es
+   * el token del link, que se valida adentro contra la base.
+   *
+   * Tampoco se rebota a quien sí tiene sesión abierta: puede estar recuperando
+   * la contraseña de su otra cuenta, o haberla pedido desde otro navegador.
+   */
+  if (
+    pathname === "/admin/recuperar" ||
+    pathname.startsWith("/admin/recuperar/")
+  ) {
+    return NextResponse.next();
+  }
+
   // Quien ya inició sesión no necesita volver a ver el login.
   if (pathname === "/admin/login") {
     if (session) {

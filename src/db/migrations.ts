@@ -292,6 +292,31 @@ const MIGRATIONS: Migration[] = [
     /** Cuánto se le espera a alguien que se fue a pagar. */
     `INSERT OR IGNORE INTO settings (key, value) VALUES ('mp_hold_minutes', '30')`,
   ],
+
+  // ── v9 · recuperación de contraseña ─────────────────────────────────────
+  [
+    /**
+     * Los pedidos de "olvidé mi contraseña".
+     *
+     * Solo el hash del token, nunca el token: el que sirve para entrar viaja
+     * únicamente en el link del mail. `expires_at` es un timestamp unix porque
+     * es un instante real, y `used_at` marca los que ya se gastaron para que un
+     * link reenviado o guardado no vuelva a funcionar.
+     *
+     * El índice único sobre el hash es a la vez la garantía de que no se repite
+     * y la forma en que se busca el token al abrir el link.
+     */
+    `CREATE TABLE IF NOT EXISTS password_resets (
+       id         INTEGER PRIMARY KEY AUTOINCREMENT,
+       user_id    INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+       token_hash TEXT    NOT NULL,
+       expires_at INTEGER NOT NULL,
+       used_at    INTEGER,
+       created_at INTEGER NOT NULL DEFAULT (unixepoch())
+     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS password_resets_token_idx ON password_resets(token_hash)`,
+    `CREATE INDEX IF NOT EXISTS password_resets_user_idx ON password_resets(user_id)`,
+  ],
 ];
 
 /**
