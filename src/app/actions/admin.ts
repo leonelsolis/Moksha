@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { and, eq, inArray } from "drizzle-orm";
 
-import { db } from "@/db";
+import { client, db } from "@/db";
 import {
   appointments,
   professionals,
@@ -12,23 +12,37 @@ import {
   vacations,
   workingHours,
 } from "@/db/schema";
-import type { ActionState } from "@/lib/action-state";
+import type { ActionState, ManualBookingState } from "@/lib/action-state";
 import {
   canAccessProfessional,
   requireAdmin,
   requireUser,
   withScope,
 } from "@/lib/auth";
-import { isValidDateString, parseMinute } from "@/lib/dates";
+import {
+  overlappingAppointments,
+  releaseExpiredHolds,
+} from "@/lib/availability";
+import {
+  formatDateLong,
+  formatMinute,
+  isValidDateString,
+  parseMinute,
+} from "@/lib/dates";
 import { sendTestEmail } from "@/lib/email";
 import { checkMercadoPagoToken, mercadoPagoToken } from "@/lib/mercadopago";
 import { notifyProfessionalCancellation } from "@/lib/notify";
 import { formatMoney } from "@/lib/payments";
 import { updateSettings, type SettingKey, type Settings } from "@/lib/settings";
+import { generateToken } from "@/lib/tokens";
 import {
+  APPOINTMENT_NOTES_MAX,
   isValidEmail,
   normalizeEmail,
+  readManualClient,
   SERVICE_DESCRIPTION_MAX,
+  validateManualClient,
+  type FieldErrors,
 } from "@/lib/validation";
 
 /**
@@ -76,6 +90,237 @@ function refreshAll() {
 }
 
 /* ── Turnos ─────────────────────────────────────────────────────────── */
+
+/** Duración de un turno manual sin servicio elegido, en minutos. */
+const DEFAULT_MANUAL_DURATION = 60;
+
+const MINUTES_IN_A_DAY = 24 * 60;
+
+function manualFail(
+  message: string,
+  errors: FieldErrors = {},
+): ManualBookingState {
+  return { ok: false, message, errors };
+}
+
+/**
+ * Carga a mano un turno que se pidió por fuera de la web.
+ *
+ * El turno que llega por WhatsApp, por teléfono o en el mostrador termina en la
+ * misma tabla que los demás. Es la única forma de que ocupe el horario de
+ * verdad: si viviera aparte, la web seguiría ofreciendo ese hueco como libre.
+ * Lo único que lo distingue es `origin = 'manual'` y la cuenta que lo anotó,
+ * que es lo que la agenda usa para marcarlo.
+ *
+ * Tres diferencias con la reserva de la web, todas a propósito:
+ *
+ *   · Los datos de la clienta son casi todos opcionales. Acá no hay nadie
+ *     completando un formulario: hay una profesional anotando lo que le
+ *     dijeron. Con el nombre alcanza (ver `validateManualClient`).
+ *
+ *   · No se comprueban las reglas de disponibilidad —horario de atención,
+ *     antelación mínima, la grilla de turnos del servicio—. El panel es
+ *     justamente donde se anotan las excepciones: la clienta que viene media
+ *     hora antes de abrir, el turno de un feriado. Quien lo carga sabe lo que
+ *     está haciendo.
+ *
+ *   · No se manda ningún mail ni se genera link de cancelación para nadie: el
+ *     turno lo arregló el local por otro medio y ahí se sigue arreglando.
+ *
+ * Lo que sí se comprueba, con el mismo rigor que en la web, es que el horario
+ * esté libre. Y se comprueba dos veces: una consulta que da el mensaje ("choca
+ * con el turno de las 10:00") y una inserción condicional que es la garantía
+ * real, porque entre la consulta y el alta otra persona puede reservar desde la
+ * web. Ver `overlappingAppointments`.
+ */
+export async function createManualAppointment(
+  _prev: ManualBookingState,
+  formData: FormData,
+): Promise<ManualBookingState> {
+  const user = await requireUser();
+
+  const professionalId = Number(formData.get("professionalId"));
+  if (!professionalId) return manualFail("Elegí de quién es el turno.");
+  if (!canAccessProfessional(user, professionalId)) return manualFail(FORBIDDEN);
+
+  const [professional] = await db
+    .select()
+    .from(professionals)
+    .where(eq(professionals.id, professionalId))
+    .limit(1);
+
+  if (!professional) return manualFail("Profesional no encontrada.");
+
+  const { errors, value } = validateManualClient(readManualClient(formData));
+
+  const date = String(formData.get("date") ?? "");
+  if (!isValidDateString(date)) errors.date = "Elegí la fecha del turno.";
+
+  const startMinute = parseMinute(String(formData.get("time") ?? ""));
+  if (startMinute === null) errors.time = "Elegí la hora del turno.";
+
+  /*
+   * El servicio es opcional: puede ser uno de los cargados —y entonces manda su
+   * nombre y su duración— o un motivo escrito a mano, para lo que no está en la
+   * lista. En los dos casos el nombre se copia al turno, igual que en la web:
+   * la fila guarda lo que se hizo ese día aunque después el servicio cambie.
+   */
+  const serviceId = Number(formData.get("serviceId")) || null;
+  let serviceName = String(formData.get("serviceName") ?? "")
+    .trim()
+    .slice(0, 80);
+  let duration = Number(formData.get("durationMinutes"));
+
+  if (serviceId) {
+    const [service] = await db
+      .select()
+      .from(services)
+      .where(
+        and(
+          eq(services.id, serviceId),
+          eq(services.professionalId, professionalId),
+        ),
+      )
+      .limit(1);
+
+    if (!service) {
+      errors.serviceId = "Ese servicio no es de esta profesional.";
+    } else {
+      serviceName = service.name;
+      // La duración del servicio es el punto de partida, no la ley: un turno
+      // arreglado por WhatsApp puede llevar más o menos que el estándar, y el
+      // formulario deja cambiarla.
+      if (!Number.isFinite(duration) || duration <= 0) {
+        duration = service.durationMinutes;
+      }
+    }
+  } else if (!Number.isFinite(duration) || duration <= 0) {
+    duration = DEFAULT_MANUAL_DURATION;
+  }
+
+  duration = Math.round(duration);
+
+  if (duration < 5 || duration > 480) {
+    errors.durationMinutes = "La duración tiene que estar entre 5 y 480 minutos.";
+  } else if (startMinute !== null && startMinute + duration > MINUTES_IN_A_DAY) {
+    // Un turno que cruza la medianoche sería un rango que la agenda no sabe
+    // dibujar y que la comprobación de choques no vería: los dos días son
+    // filas distintas.
+    errors.time = "El turno no puede terminar después de la medianoche.";
+  }
+
+  const notes = String(formData.get("notes") ?? "")
+    .trim()
+    .slice(0, APPOINTMENT_NOTES_MAX);
+
+  if (Object.keys(errors).length > 0) {
+    return manualFail("Revisá los datos marcados.", errors);
+  }
+
+  const start = startMinute!;
+  const endMinute = start + duration;
+  const now = Math.floor(Date.now() / 1000);
+
+  // Las pre-reservas vencidas de ese día se sueltan antes de intentar el alta:
+  // el índice único las cuenta, así que una que quedó a medias bloquearía el
+  // horario aunque su retención ya no valga.
+  await releaseExpiredHolds(professionalId, date, now);
+
+  const clashes = await overlappingAppointments({
+    professionalId,
+    date,
+    startMinute: start,
+    endMinute,
+  });
+
+  if (clashes.length > 0) {
+    const clash = clashes[0];
+    const who = [clash.firstName, clash.lastName].filter(Boolean).join(" ");
+
+    return manualFail(
+      `Ese horario se pisa con el turno de ${formatMinute(clash.startMinute)} a ` +
+        `${formatMinute(clash.endMinute)}${who ? ` de ${who}` : ""}. ` +
+        "Elegí otro horario o cancelá el que estaba.",
+      { time: "El horario ya está ocupado." },
+    );
+  }
+
+  /*
+   * El alta y la comprobación de choques viajan en la misma sentencia: SQLite
+   * ejecuta cada una de forma atómica, así que no hay ventana entre "miré si
+   * estaba libre" y "lo guardé". Es la misma forma que usa la reserva de la
+   * web (ver `createBooking`), por el mismo motivo: sin esto, dos altas
+   * simultáneas —una del panel y una de la web— entrarían las dos.
+   *
+   * El hash del token de cancelación se genera y se descarta el token: la
+   * columna es NOT NULL y única, y de un turno manual no hay ningún link que
+   * mandarle a nadie. Que el token en claro no exista en ninguna parte es
+   * justamente lo correcto acá.
+   */
+  const { hash } = generateToken();
+
+  let appointmentId: number | null = null;
+  try {
+    const result = await client.execute({
+      sql: `INSERT INTO appointments
+              (professional_id, service_id, service_name, date, start_minute,
+               end_minute, status, first_name, last_name, dni, email, phone,
+               notes, origin, created_by_user_id, cancel_token_hash, created_at)
+            SELECT ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, '', ?, ?, 'manual', ?, ?,
+                   unixepoch()
+            WHERE NOT EXISTS (
+              SELECT 1 FROM appointments
+               WHERE professional_id = ? AND date = ?
+                 AND (status = 'booked'
+                      OR (status = 'pending_payment' AND hold_expires_at > ?))
+                 AND start_minute < ? AND end_minute > ?
+            )
+            RETURNING id`,
+      args: [
+        professionalId,
+        serviceId,
+        serviceName,
+        date,
+        start,
+        endMinute,
+        value.firstName,
+        value.lastName,
+        value.dni,
+        value.phone,
+        notes,
+        user.id,
+        hash,
+        professionalId,
+        date,
+        now,
+        endMinute,
+        start,
+      ],
+    });
+
+    appointmentId = result.rows.length > 0 ? Number(result.rows[0].id) : null;
+  } catch {
+    // Salta si el índice único parcial rechazó la inserción.
+    appointmentId = null;
+  }
+
+  if (appointmentId === null) {
+    return manualFail(
+      "Ese horario acaba de ocuparse. Recargá la agenda y probá con otro.",
+      { time: "El horario ya está ocupado." },
+    );
+  }
+
+  refreshAll();
+
+  const who = [value.firstName, value.lastName].filter(Boolean).join(" ");
+
+  return {
+    ok: true,
+    message: `Turno cargado: ${who}, ${formatDateLong(date)} a las ${formatMinute(start)}.`,
+    errors: {},
+  };
+}
 
 export async function cancelAppointmentAsAdmin(
   _prev: ActionState,

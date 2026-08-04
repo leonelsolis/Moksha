@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { and, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, eq, gte, inArray } from "drizzle-orm";
 
 import { client, db } from "@/db";
 import { appointments, professionals, services } from "@/db/schema";
@@ -12,7 +12,7 @@ import type {
   LookupResult,
   LookupState,
 } from "@/lib/action-state";
-import { isSlotBookable } from "@/lib/availability";
+import { isSlotBookable, releaseExpiredHolds } from "@/lib/availability";
 import { formatDateLong, formatMinute, minutesUntil, nowInTz } from "@/lib/dates";
 import { sendCancellationConfirmation } from "@/lib/email";
 import {
@@ -293,35 +293,6 @@ export async function createBooking(
   revalidatePath("/admin");
 
   redirect(`/turno/${token}?nuevo=1`);
-}
-
-/**
- * Da de baja las pre-reservas de ese día a las que se les venció el plazo de
- * pago. El horario ya estaba libre para la disponibilidad —que ignora las
- * retenciones vencidas—, pero la fila seguía ocupando el índice único, que no
- * puede mirar la hora. Es una limpieza puntual, sobre un solo día y una sola
- * profesional; no hace falta ningún proceso aparte.
- *
- * Si falla, no pasa nada: en el peor caso el alta choca contra el índice y la
- * clienta ve el mismo mensaje que ante cualquier horario ya tomado.
- */
-async function releaseExpiredHolds(
-  professionalId: number,
-  date: string,
-  now: number,
-) {
-  await db
-    .update(appointments)
-    .set({ status: "expired_payment" })
-    .where(
-      and(
-        eq(appointments.professionalId, professionalId),
-        eq(appointments.date, date),
-        eq(appointments.status, "pending_payment"),
-        lte(appointments.holdExpiresAt, now),
-      ),
-    )
-    .catch(() => undefined);
 }
 
 /**

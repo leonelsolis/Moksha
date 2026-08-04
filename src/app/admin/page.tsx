@@ -2,9 +2,10 @@ import { and, asc, eq, gte, inArray, lte, type SQL } from "drizzle-orm";
 
 import { Alert } from "@/components/Alert";
 import { AppointmentActions } from "@/components/admin/AppointmentActions";
+import { ManualBookingForm } from "@/components/admin/ManualBookingForm";
 import { Icon } from "@/components/Icon";
 import { db } from "@/db";
-import { appointments, professionals } from "@/db/schema";
+import { appointments, professionals, services } from "@/db/schema";
 import { requireUser, scopeOf } from "@/lib/auth";
 import {
   addDays,
@@ -71,6 +72,41 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
     .from(professionals)
     .orderBy(asc(professionals.sortOrder), asc(professionals.name));
 
+  /*
+   * A quién se le puede cargar un turno a mano: las profesionales activas que
+   * este usuario puede tocar. Una profesional solo se ve a sí misma, así que el
+   * formulario ni siquiera dibuja el selector.
+   *
+   * Los servicios viajan a la pantalla para que elegir uno complete solo la
+   * duración. Van los de todas las que se ven, filtrados en el navegador al
+   * cambiar de profesional: son unas pocas filas y evita una consulta por cada
+   * vez que se cambia el selector.
+   */
+  const canLoadFor = staff.filter(
+    (person) => person.active && (scope === null || person.id === scope),
+  );
+
+  const serviceOptions = canLoadFor.length
+    ? await db
+        .select({
+          id: services.id,
+          professionalId: services.professionalId,
+          name: services.name,
+          durationMinutes: services.durationMinutes,
+        })
+        .from(services)
+        .where(
+          and(
+            inArray(
+              services.professionalId,
+              canLoadFor.map((p) => p.id),
+            ),
+            eq(services.active, true),
+          ),
+        )
+        .orderBy(asc(services.sortOrder), asc(services.id))
+    : [];
+
   const conditions: (SQL | undefined)[] = [
     gte(appointments.date, from),
     lte(appointments.date, to),
@@ -123,6 +159,17 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
           </p>
         </div>
       </div>
+
+      {canLoadFor.length > 0 ? (
+        <ManualBookingForm
+          staff={canLoadFor.map((person) => ({
+            id: person.id,
+            name: person.name,
+          }))}
+          services={serviceOptions}
+          today={today}
+        />
+      ) : null}
 
       {scope !== null && !ownName ? (
         <Alert tone="warning" title="Tu cuenta no está vinculada a ninguna profesional">
@@ -274,6 +321,16 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
                                 {statusLabel(appointment.status)}
                               </span>
                             ) : null}
+
+                            {/* Marca de dónde salió el turno. Va junto al
+                                estado y no en lugar suyo: un turno cargado a
+                                mano también se puede cancelar. */}
+                            {appointment.origin === "manual" ? (
+                              <span className="badge border-line-strong bg-surface-sunken text-ink-soft">
+                                <Icon name="edit" className="size-3" />
+                                Cargado a mano
+                              </span>
+                            ) : null}
                           </div>
 
                           <p
@@ -282,15 +339,25 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
                             {appointment.firstName} {appointment.lastName}
                           </p>
 
+                          {/* Un turno de la web trae todos los datos; uno
+                              cargado a mano, los que se hayan sabido. Se
+                              muestra lo que haya en lugar de dejar etiquetas
+                              vacías dando vueltas. */}
                           <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-ink-soft">
-                            <span className="tabular">DNI {appointment.dni}</span>
+                            {appointment.dni ? (
+                              <span className="tabular">
+                                DNI {appointment.dni}
+                              </span>
+                            ) : null}
 
-                            <a
-                              href={`mailto:${appointment.email}`}
-                              className="underline-offset-4 hover:text-ink hover:underline"
-                            >
-                              {appointment.email}
-                            </a>
+                            {appointment.email ? (
+                              <a
+                                href={`mailto:${appointment.email}`}
+                                className="underline-offset-4 hover:text-ink hover:underline"
+                              >
+                                {appointment.email}
+                              </a>
+                            ) : null}
 
                             {appointment.phone ? (
                               <a
@@ -301,6 +368,12 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
                               </a>
                             ) : null}
                           </div>
+
+                          {appointment.notes ? (
+                            <p className="mt-1.5 whitespace-pre-line border-l-2 border-line-strong pl-2.5 text-sm text-ink-soft">
+                              {appointment.notes}
+                            </p>
+                          ) : null}
                         </div>
 
                         <AppointmentActions

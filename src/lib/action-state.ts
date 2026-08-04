@@ -28,6 +28,25 @@ export const emptyBookingState: BookingState = {
 };
 
 /**
+ * Alta de un turno desde el panel, cargado a mano.
+ *
+ * Tiene la misma forma que `BookingState` y es un tipo aparte a propósito: son
+ * dos formularios distintos, con campos distintos, y que hoy coincidan no
+ * significa que tengan que seguir coincidiendo.
+ */
+export type ManualBookingState = {
+  ok: boolean;
+  message: string | null;
+  errors: FieldErrors;
+};
+
+export const emptyManualBookingState: ManualBookingState = {
+  ok: false,
+  message: null,
+  errors: {},
+};
+
+/**
  * Reintento del pago de la seña. Cuando sale bien no hay estado que mostrar:
  * la acción redirige al checkout de Mercado Pago.
  */
