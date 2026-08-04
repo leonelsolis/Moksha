@@ -36,15 +36,27 @@ import { SlotPicker } from "./SlotPicker";
  * Al costado va la ficha del servicio elegido (qué es, y su foto si está
  * activada). No puede vivir dentro del paso porque el paso se colapsa apenas se
  * elige: la ficha es un elemento aparte que acompaña al resto del flujo.
+ *
+ * Debajo de esa ficha va el mapa del local, que llega armado desde el servidor
+ * en `location`. Se recibe como prop en lugar de construirlo acá porque la
+ * dirección vive en Ajustes y este componente es de cliente: así el mapa se
+ * renderiza en el servidor y la configuración no viaja al navegador.
  */
 
 type Props = {
   professionals: PublicProfessionalView[];
   window: BookingWindowView;
   cancelCutoffHours: number;
+  /** Ficha de ubicación ya armada (o `null` si no hay dirección cargada). */
+  location?: React.ReactNode;
 };
 
-export function BookingFlow({ professionals, window, cancelCutoffHours }: Props) {
+export function BookingFlow({
+  professionals,
+  window,
+  cancelCutoffHours,
+  location = null,
+}: Props) {
   const [professional, setProfessional] = useState<PublicProfessionalView | null>(
     null,
   );
@@ -166,11 +178,12 @@ export function BookingFlow({ professionals, window, cancelCutoffHours }: Props)
    */
   const info = service ? <ServiceInfo key={service.id} service={service} /> : null;
 
-  // La columna del costado solo se reserva si hay algo que pueda ir ahí; si el
-  // negocio no cargó ninguna explicación, la página queda exactamente como antes.
-  const withAside = professionals.some((item) =>
-    item.services.some(hasServiceInfo),
-  );
+  // La columna del costado solo se reserva si hay algo que pueda ir ahí: el
+  // mapa, o alguna explicación de servicio cargada. Sin nada de eso, la página
+  // queda exactamente como antes.
+  const withAside =
+    location !== null ||
+    professionals.some((item) => item.services.some(hasServiceInfo));
 
   return (
     <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
@@ -410,10 +423,24 @@ export function BookingFlow({ professionals, window, cancelCutoffHours }: Props)
         </div>
       </div>
 
-      {/* Columna del costado: acompaña al flujo mientras se elige día y hora. */}
+      {/*
+        Columna del costado: acompaña al flujo mientras se elige día y hora.
+
+        En el celular no desaparece si hay mapa, se apila al final de todo:
+        primero se saca el turno, después se ve cómo llegar. Es `flex` y no
+        `space-y` a propósito, porque la ficha de servicio de acá adentro se
+        oculta por CSS y el hueco entre elementos no debe contarla.
+      */}
       {withAside ? (
-        <aside className="hidden xl:sticky xl:top-6 xl:block xl:w-72 xl:shrink-0">
-          {info}
+        <aside
+          className={`flex-col gap-3 xl:sticky xl:top-6 xl:flex xl:w-72 xl:shrink-0 ${
+            location ? "flex" : "hidden"
+          }`}
+        >
+          {/* En pantallas angostas la ficha ya se muestra arriba, dentro del
+              flujo; acá aparece recién en la columna del costado. */}
+          <div className="hidden xl:block">{info}</div>
+          {location}
         </aside>
       ) : null}
     </div>

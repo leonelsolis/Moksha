@@ -145,9 +145,10 @@ export default async function SettingsPage() {
                 maxLength={120}
               />
               <p className="mt-1 text-xs text-ink-muted">
-                Con esto se arma el mapa que ve la clienta al confirmar el
-                turno. Escribila como la buscarías en Google Maps (calle,
-                número y ciudad). Si queda vacía no aparece ningún mapa.
+                Con esto se arma el mapa: el que acompaña a la reserva y el que
+                ve la clienta al confirmar el turno. Escribila como la buscarías
+                en Google Maps (calle, número y ciudad). Si queda vacía no
+                aparece ningún mapa.
               </p>
             </div>
           </div>
