@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, eq, gt, gte, inArray, lte, ne, or } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, lt, lte, ne, or } from "drizzle-orm";
 
 import { db } from "@/db";
 import {
@@ -385,6 +385,85 @@ export type PublicProfessional = Awaited<
 /** Duración a usar cuando la profesional tiene un único servicio. */
 export function defaultService(list: Service[]) {
   return list.length === 1 ? list[0] : null;
+}
+
+/**
+ * Los turnos que chocan con un rango horario.
+ *
+ * Dos turnos se solapan cuando el nuevo empieza antes de que termine el otro y
+ * termina después de que el otro empieza. Escrito así cubre los tres casos de
+ * una sola vez: el que arranca en el medio del anterior, el que lo contiene
+ * entero y el que empieza igual. Dos turnos pegados —uno termina 11:00 y el
+ * otro empieza 11:00— no se solapan, que es justamente como se llena una
+ * agenda.
+ *
+ * Solo cuentan los turnos que retienen el horario (`occupiesSlot`): uno
+ * cancelado o una pre-reserva vencida no bloquean nada.
+ *
+ * Es la comprobación que da el mensaje —"choca con el turno de 10:00 a 11:00"—,
+ * no la que garantiza que no haya dos turnos encima. Esa garantía la dan la
+ * inserción condicional y el índice único parcial, porque entre esta consulta y
+ * el alta hay una ventana en la que otra persona puede reservar.
+ */
+export async function overlappingAppointments(options: {
+  professionalId: number;
+  date: string;
+  startMinute: number;
+  endMinute: number;
+  /** Para reprogramar: el turno que se está moviendo no choca consigo mismo. */
+  excludeId?: number;
+}) {
+  return db
+    .select({
+      id: appointments.id,
+      startMinute: appointments.startMinute,
+      endMinute: appointments.endMinute,
+      firstName: appointments.firstName,
+      lastName: appointments.lastName,
+      serviceName: appointments.serviceName,
+    })
+    .from(appointments)
+    .where(
+      and(
+        eq(appointments.professionalId, options.professionalId),
+        eq(appointments.date, options.date),
+        occupiesSlot(),
+        options.excludeId ? ne(appointments.id, options.excludeId) : undefined,
+        lt(appointments.startMinute, options.endMinute),
+        gt(appointments.endMinute, options.startMinute),
+      ),
+    )
+    .orderBy(asc(appointments.startMinute));
+}
+
+/**
+ * Da de baja las pre-reservas de ese día a las que se les venció el plazo de
+ * pago. El horario ya estaba libre para la disponibilidad —que ignora las
+ * retenciones vencidas—, pero la fila seguía ocupando el índice único, que no
+ * puede mirar la hora. Es una limpieza puntual, sobre un solo día y una sola
+ * profesional; no hace falta ningún proceso aparte.
+ *
+ * Corre antes de cada alta, venga de la web o del panel. Si falla, no pasa
+ * nada: en el peor caso el alta choca contra el índice y quien reserva ve el
+ * mismo mensaje que ante cualquier horario ya tomado.
+ */
+export async function releaseExpiredHolds(
+  professionalId: number,
+  date: string,
+  now = Math.floor(Date.now() / 1000),
+) {
+  await db
+    .update(appointments)
+    .set({ status: "expired_payment" })
+    .where(
+      and(
+        eq(appointments.professionalId, professionalId),
+        eq(appointments.date, date),
+        eq(appointments.status, "pending_payment"),
+        lte(appointments.holdExpiresAt, now),
+      ),
+    )
+    .catch(() => undefined);
 }
 
 /** Turnos que chocan con un rango dado. Usado por el chequeo transaccional. */

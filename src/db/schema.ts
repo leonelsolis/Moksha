@@ -168,11 +168,50 @@ export const appointments = sqliteTable(
     })
       .notNull()
       .default("booked"),
+    /**
+     * Datos de la persona.
+     *
+     * En un turno sacado por la web están todos y validados. En uno cargado a
+     * mano desde el panel (`origin = 'manual'`) el único seguro es `firstName`:
+     * quien atendió el WhatsApp escribe lo que tenga. `lastName`, `dni` y
+     * `email` quedan en cadena vacía —la columna sigue siendo NOT NULL, que es
+     * lo que ya esperaba el resto del código— y las pantallas del panel
+     * muestran solo lo que esté cargado.
+     */
     firstName: text("first_name").notNull(),
-    lastName: text("last_name").notNull(),
-    dni: text("dni").notNull(),
-    email: text("email").notNull(),
+    lastName: text("last_name").notNull().default(""),
+    dni: text("dni").notNull().default(""),
+    email: text("email").notNull().default(""),
     phone: text("phone").notNull().default(""),
+
+    /* ── De dónde salió el turno ──────────────────────────────────────── */
+
+    /**
+     * Cómo entró el turno a la agenda.
+     *
+     *   online   la clienta lo sacó sola desde la web. Es el camino de siempre
+     *            y el valor por defecto: las filas que ya existen son todas
+     *            de ahí.
+     *   manual   lo cargó una profesional desde el panel porque el turno se
+     *            pidió por WhatsApp, por teléfono o en el mostrador.
+     *
+     * Un turno manual ocupa el horario exactamente igual que cualquier otro
+     * —la disponibilidad y el índice antichoque no miran esta columna—; la
+     * distinción es para la agenda, que lo señala con un indicador propio.
+     */
+    origin: text("origin", { enum: ["online", "manual"] })
+      .notNull()
+      .default("online"),
+    /**
+     * Qué cuenta del panel lo cargó. NULL en los que salieron de la web.
+     *
+     * Es a propósito un id suelto y no una clave foránea: el turno tiene que
+     * seguir existiendo tal cual aunque esa cuenta se borre. Es un dato de
+     * auditoría —quién lo anotó— y no una relación de la que dependa nada.
+     */
+    createdByUserId: integer("created_by_user_id"),
+    /** Lo que la profesional quiera anotar. Solo se ve en el panel. */
+    notes: text("notes").notNull().default(""),
     /**
      * Solo el hash SHA-256 del token de cancelación. El token en claro existe
      * únicamente en el link que recibe el cliente, así un volcado de la base

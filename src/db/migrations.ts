@@ -317,6 +317,46 @@ const MIGRATIONS: Migration[] = [
     `CREATE UNIQUE INDEX IF NOT EXISTS password_resets_token_idx ON password_resets(token_hash)`,
     `CREATE INDEX IF NOT EXISTS password_resets_user_idx ON password_resets(user_id)`,
   ],
+
+  // ── v10 · turnos cargados a mano desde el panel ─────────────────────────
+  async (client) => [
+    /**
+     * El turno que no salió de la web.
+     *
+     * Cuando alguien pide el turno por WhatsApp, la profesional lo carga desde
+     * el panel. Va a la misma tabla que los demás —es la única forma de que
+     * ocupe el horario de verdad y de que la agenda sea una sola— con tres
+     * columnas que lo distinguen:
+     *
+     *   `origin`             'manual' u 'online'. Arranca en 'online' para que
+     *                        todo lo que ya está cargado quede como lo que es.
+     *   `created_by_user_id` qué cuenta lo anotó. Sin clave foránea a propósito
+     *                        (ver la nota del esquema).
+     *   `notes`              lo que haya que recordar de ese turno.
+     *
+     * El texto vacío como valor por defecto de `notes` mantiene la convención
+     * de la tabla: los textos opcionales son '' y no NULL, así ninguna pantalla
+     * tiene que distinguir entre "sin nota" y "nota nula".
+     */
+    ...(await addColumns(client, "appointments", {
+      origin: "TEXT NOT NULL DEFAULT 'online'",
+      created_by_user_id: "INTEGER",
+      notes: "TEXT NOT NULL DEFAULT ''",
+    })),
+
+    /**
+     * Los datos de la clienta dejan de ser obligatorios.
+     *
+     * En un turno de la web siguen viniendo todos y validados; en uno cargado a
+     * mano el único seguro es el nombre. SQLite no sabe cambiar la nulabilidad
+     * de una columna con ALTER, pero acá no hace falta: las columnas ya son NOT
+     * NULL y lo siguen siendo. Lo que cambia es qué se guarda —cadena vacía en
+     * lugar de un dato inventado— y eso no necesita migración. Queda anotado
+     * para que la diferencia entre el esquema y la realidad no sorprenda a
+     * nadie: el DEFAULT '' que se agrega en `schema.ts` es lo que evita tener
+     * que escribir la cadena vacía en cada inserción.
+     */
+  ],
 ];
 
 /**

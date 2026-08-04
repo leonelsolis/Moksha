@@ -19,6 +19,16 @@ type Props = {
   inputMode?: "text" | "numeric" | "tel" | "email";
   maxLength?: number;
   className?: string;
+  /**
+   * Campo controlado. Los dos van juntos: pasando `value` y `onChange` el valor
+   * lo maneja quien llama, y `defaultValue` deja de tener sentido.
+   *
+   * Hace falta cuando el formulario tiene que sobrevivir a un envío rechazado:
+   * React vacía los campos NO controlados al terminar una acción, así que un
+   * error del servidor obligaría a escribir todo de nuevo.
+   */
+  value?: string;
+  onChange?: (value: string) => void;
 };
 
 export function Field({
@@ -34,6 +44,8 @@ export function Field({
   inputMode,
   maxLength,
   className,
+  value,
+  onChange,
 }: Props) {
   const errorId = `${name}-error`;
   const hintId = `${name}-hint`;
@@ -52,7 +64,9 @@ export function Field({
         name={name}
         type={type}
         className="input"
-        defaultValue={defaultValue}
+        {...(onChange
+          ? { value: value ?? "", onChange: (e) => onChange(e.target.value) }
+          : { defaultValue })}
         placeholder={placeholder}
         required={required}
         autoComplete={autoComplete}
