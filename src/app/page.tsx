@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { BookingFlow } from "@/components/public/BookingFlow";
+import { LocationCard } from "@/components/public/LocationCard";
 import { SiteFooter, SiteHeader } from "@/components/public/SiteChrome";
 import { bookingWindow, getPublicProfessionals } from "@/lib/availability";
 import { nowInTz } from "@/lib/dates";
@@ -84,12 +85,18 @@ export default async function HomePage() {
   const everyoneOnVacation =
     views.length > 0 && views.every((item) => item.onVacation);
 
+  // El mapa sale de la dirección cargada en Ajustes; sin dirección no se
+  // muestra nada y la página queda igual que antes.
+  const address = settings.contact_address.trim();
+  const showMap = address !== "";
+
   /*
-   * La página se ensancha solo si hay fichas de servicio que mostrar, porque
-   * esa es la única razón para reservar la columna del costado. Sin ninguna
-   * cargada, queda en la columna única de siempre.
+   * La página se ensancha solo si hay algo para la columna del costado: el mapa
+   * del local o fichas de servicio. Sin nada de eso, queda en la columna única
+   * de siempre.
    */
-  const wide = views.some((item) => item.services.some(hasServiceInfo));
+  const wide =
+    showMap || views.some((item) => item.services.some(hasServiceInfo));
 
   /*
    * Ficha del negocio para los buscadores. Se arma con lo que ya está cargado
@@ -169,6 +176,14 @@ export default async function HomePage() {
             professionals={views}
             window={{ today, lastDate: window.to }}
             cancelCutoffHours={settingInt(settings, "cancel_cutoff_hours")}
+            location={
+              showMap ? (
+                <LocationCard
+                  address={address}
+                  businessName={settings.business_name}
+                />
+              ) : null
+            }
           />
         )}
 
