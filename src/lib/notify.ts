@@ -133,8 +133,12 @@ export async function notifyProfessionalNewBooking(appointment: AppointmentNotic
 export async function announceNewBooking(options: {
   appointment: AppointmentNotice;
   professionalName: string;
-  /** Token en claro, para armar el link de la clienta. */
-  token: string;
+  /**
+   * Token en claro, para armar el link de la clienta. Va en `null` cuando quien
+   * confirma es el aviso de Mercado Pago: ahí del token solo hay hash, y el
+   * mail sale sin link.
+   */
+  token: string | null;
 }) {
   const { appointment, professionalName, token } = options;
 
@@ -145,7 +149,7 @@ export async function announceNewBooking(options: {
     serviceName: appointment.serviceName,
     date: appointment.date,
     startMinute: appointment.startMinute,
-    manageUrl: `${await siteOrigin()}/turno/${token}`,
+    ...(token ? { manageUrl: `${await siteOrigin()}/turno/${token}` } : {}),
   }).catch((e) => ({ sent: false, reason: String(e) }));
 
   if (!mail.sent) {
