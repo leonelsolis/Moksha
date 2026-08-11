@@ -5,8 +5,14 @@ import { BookingFlow } from "@/components/public/BookingFlow";
 import { LocationCard } from "@/components/public/LocationCard";
 import { SiteFooter, SiteHeader } from "@/components/public/SiteChrome";
 import { bookingWindow, getPublicProfessionals } from "@/lib/availability";
+import { getCategoryRows } from "@/lib/catalog";
 import { nowInTz } from "@/lib/dates";
-import { hasServiceInfo, type PublicProfessionalView } from "@/lib/public-types";
+import {
+  buildCatalog,
+  catalogServices,
+  hasServiceInfo,
+  type PublicProfessionalView,
+} from "@/lib/public-types";
 import { getSettings, settingInt } from "@/lib/settings";
 import { staticSiteOrigin } from "@/lib/site-url";
 import { businessDescription, businessJsonLd } from "@/lib/structured-data";
@@ -60,27 +66,45 @@ export default async function HomePage() {
   const today = nowInTz(settings.timezone).date;
   const window = bookingWindow(settings, today);
 
-  const professionals = await getPublicProfessionals(today);
+  const [professionals, categories] = await Promise.all([
+    getPublicProfessionals(today),
+    getCategoryRows(),
+  ]);
 
-  const views: PublicProfessionalView[] = professionals.map((item) => ({
-    id: item.professional.id,
-    name: item.professional.name,
-    specialty: item.professional.specialty,
-    photoUrl: item.professional.photoUrl,
-    bio: item.professional.bio,
-    onVacation: item.onVacation,
-    vacationUntil: item.vacationUntil,
-    services: item.services.map((service) => ({
-      id: service.id,
-      name: service.name,
-      durationMinutes: service.durationMinutes,
-      price: service.price,
-      description: service.description,
-      // El interruptor del panel se resuelve acá: con la foto desactivada, su
-      // dirección ni siquiera llega al navegador.
-      photoUrl: service.showPhoto ? service.photoUrl : null,
-    })),
-  }));
+  const views: PublicProfessionalView[] = professionals.map((item) => {
+    /*
+     * El catálogo manda: la lista plana sale de recorrerlo, no al revés. Así
+     * lo que se puede reservar y lo que se puede ver son exactamente lo mismo,
+     * y una rama escondida desde el panel no deja un servicio reservable por
+     * una vía y no por la otra.
+     */
+    const catalog = buildCatalog(
+      item.services.map((service) => ({
+        id: service.id,
+        name: service.name,
+        durationMinutes: service.durationMinutes,
+        price: service.price,
+        categoryId: service.categoryId,
+        description: service.description,
+        // El interruptor del panel se resuelve acá: con la foto desactivada, su
+        // dirección ni siquiera llega al navegador.
+        photoUrl: service.showPhoto ? service.photoUrl : null,
+      })),
+      categories,
+    );
+
+    return {
+      id: item.professional.id,
+      name: item.professional.name,
+      specialty: item.professional.specialty,
+      photoUrl: item.professional.photoUrl,
+      bio: item.professional.bio,
+      onVacation: item.onVacation,
+      vacationUntil: item.vacationUntil,
+      services: catalogServices(catalog),
+      catalog,
+    };
+  });
 
   const everyoneOnVacation =
     views.length > 0 && views.every((item) => item.onVacation);

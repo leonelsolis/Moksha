@@ -7,6 +7,8 @@ import { Icon } from "@/components/Icon";
 import { db } from "@/db";
 import { appointments, professionals, services } from "@/db/schema";
 import { requireUser, scopeOf } from "@/lib/auth";
+import { getCategoryRows } from "@/lib/catalog";
+import { categoryPathLabel } from "@/lib/categories";
 import {
   addDays,
   formatDateLong,
@@ -86,26 +88,41 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
     (person) => person.active && (scope === null || person.id === scope),
   );
 
-  const serviceOptions = canLoadFor.length
-    ? await db
-        .select({
-          id: services.id,
-          professionalId: services.professionalId,
-          name: services.name,
-          durationMinutes: services.durationMinutes,
-        })
-        .from(services)
-        .where(
-          and(
-            inArray(
-              services.professionalId,
-              canLoadFor.map((p) => p.id),
+  const [serviceRows, categories] = canLoadFor.length
+    ? await Promise.all([
+        db
+          .select({
+            id: services.id,
+            professionalId: services.professionalId,
+            categoryId: services.categoryId,
+            name: services.name,
+            durationMinutes: services.durationMinutes,
+          })
+          .from(services)
+          .where(
+            and(
+              inArray(
+                services.professionalId,
+                canLoadFor.map((p) => p.id),
+              ),
+              eq(services.active, true),
             ),
-            eq(services.active, true),
-          ),
-        )
-        .orderBy(asc(services.sortOrder), asc(services.id))
-    : [];
+          )
+          .orderBy(asc(services.sortOrder), asc(services.id)),
+        getCategoryRows(),
+      ])
+    : [[], []];
+
+  // La ruta de la categoría se resuelve acá y viaja armada: el formulario es
+  // de cliente y no tiene por qué recibir el árbol entero para escribir una
+  // línea de texto en cada opción.
+  const serviceOptions = serviceRows.map((service) => ({
+    id: service.id,
+    professionalId: service.professionalId,
+    name: service.name,
+    durationMinutes: service.durationMinutes,
+    category: categoryPathLabel(categories, service.categoryId),
+  }));
 
   const conditions: (SQL | undefined)[] = [
     gte(appointments.date, from),

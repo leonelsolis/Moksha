@@ -32,6 +32,12 @@ const NAV: AdminNavItem[] = [
   { href: "/admin/horarios", label: "Horarios", icon: "calendar", adminOnly: false },
   { href: "/admin/servicios", label: "Servicios", icon: "tag", adminOnly: false },
   {
+    href: "/admin/categorias",
+    label: "Categorías",
+    icon: "folder",
+    adminOnly: true,
+  },
+  {
     href: "/admin/perfil",
     label: "Mi perfil",
     icon: "user",

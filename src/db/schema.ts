@@ -6,6 +6,7 @@ import {
   sqliteTable,
   text,
   uniqueIndex,
+  type AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 
 /**
@@ -38,6 +39,42 @@ export const professionals = sqliteTable("professionals", {
     .default(sql`(unixepoch())`),
 });
 
+/**
+ * Cómo se agrupan los servicios de cara al cliente.
+ *
+ * Es un árbol: "Esmaltado semipermanente" arriba y adentro los tipos que hay,
+ * cada uno de los cuales puede a su vez tener los suyos. La web pública lo
+ * recorre en cards, un nivel por vez, en lugar de tirar treinta servicios
+ * sueltos en una lista.
+ *
+ * Las categorías son del negocio, no de cada profesional: "Capping gel" es lo
+ * mismo lo haga quien lo haga, y duplicarlo por profesional obligaría a
+ * renombrarlo en tres lugares. Lo que ata una categoría a una profesional es
+ * tener servicios suyos adentro; una rama sin ningún servicio de esa persona no
+ * aparece en su catálogo.
+ *
+ * `active` apagado esconde la rama entera —la categoría, sus subcategorías y
+ * los servicios que cuelgan de ella— sin borrar nada. Es la forma de sacar de
+ * la web una línea completa por una temporada.
+ */
+export const serviceCategories = sqliteTable(
+  "service_categories",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    /** NULL = categoría de primer nivel. Ver `CATEGORY_MAX_DEPTH`. */
+    parentId: integer("parent_id").references(
+      (): AnySQLiteColumn => serviceCategories.id,
+      { onDelete: "set null" },
+    ),
+    name: text("name").notNull(),
+    /** Se muestra bajo el nombre en la card. Vacío = solo el nombre. */
+    description: text("description").notNull().default(""),
+    sortOrder: integer("sort_order").notNull().default(0),
+    active: integer("active", { mode: "boolean" }).notNull().default(true),
+  },
+  (t) => [index("service_categories_parent_idx").on(t.parentId)],
+);
+
 export const services = sqliteTable(
   "services",
   {
@@ -45,6 +82,13 @@ export const services = sqliteTable(
     professionalId: integer("professional_id")
       .notNull()
       .references(() => professionals.id, { onDelete: "cascade" }),
+    /**
+     * En qué card del catálogo entra. NULL = suelto en el primer nivel, que es
+     * como quedan todos los servicios que ya existían.
+     */
+    categoryId: integer("category_id").references(() => serviceCategories.id, {
+      onDelete: "set null",
+    }),
     name: text("name").notNull(),
     durationMinutes: integer("duration_minutes").notNull(),
     /** Opcional: si es null no se muestra precio en ninguna pantalla. */
@@ -335,6 +379,7 @@ export const rateLimits = sqliteTable("rate_limits", {
 });
 
 export type Professional = typeof professionals.$inferSelect;
+export type ServiceCategory = typeof serviceCategories.$inferSelect;
 export type Service = typeof services.$inferSelect;
 export type Vacation = typeof vacations.$inferSelect;
 export type WorkingHour = typeof workingHours.$inferSelect;

@@ -19,6 +19,7 @@ import {
 import { Calendar } from "./Calendar";
 import { ProfessionalCard } from "./ProfessionalCard";
 import { ServiceInfo } from "./ServiceInfo";
+import { ServicePicker } from "./ServicePicker";
 import { SlotPicker } from "./SlotPicker";
 
 /**
@@ -32,6 +33,10 @@ import { SlotPicker } from "./SlotPicker";
  *
  * La disponibilidad de toda la ventana de reserva se pide de una sola vez al
  * elegir el servicio, así moverse entre días y meses es instantáneo.
+ *
+ * El paso del servicio no es una lista sino el catálogo del negocio, que se
+ * recorre en cards por categoría (ver `ServicePicker`). Acá adentro sigue
+ * siendo un paso más: se elige uno y el flujo avanza igual que antes.
  *
  * Al costado va la ficha del servicio elegido (qué es, y su foto si está
  * activada). No puede vivir dentro del paso porque el paso se colapsa apenas se
@@ -228,36 +233,20 @@ export function BookingFlow({
             }}
           >
             <div className="space-y-4">
-              <div className="grid gap-2 sm:grid-cols-2">
-                {professional?.services.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => selectService(item)}
-                    aria-pressed={service?.id === item.id}
-                    className={`flex items-start justify-between gap-3 rounded-sm border p-3 text-left transition-colors ${
-                      service?.id === item.id
-                        ? "border-accent bg-accent-soft"
-                        : "border-line-strong bg-surface hover:bg-surface-sunken"
-                    }`}
-                  >
-                    <span className="min-w-0">
-                      <span className="block text-sm font-medium">{item.name}</span>
-                      <span className="mt-1 block text-xs text-ink-soft tabular">
-                        {item.durationMinutes} min
-                      </span>
-                      {item.price != null ? (
-                        <span className="mt-1 block text-sm font-semibold text-accent tabular">
-                          ${item.price.toLocaleString("es-AR")}
-                        </span>
-                      ) : null}
-                    </span>
-                    {service?.id === item.id ? (
-                      <Icon name="check" className="size-4 shrink-0 text-accent" />
-                    ) : null}
-                  </button>
-                ))}
-              </div>
+              {/*
+                El `key` reinicia la navegación del catálogo al cambiar de
+                profesional: las categorías son del negocio, pero la rama en la
+                que estaba parada la clienta era la de la anterior.
+              */}
+              {professional ? (
+                <ServicePicker
+                  key={professional.id}
+                  catalog={professional.catalog}
+                  selected={service}
+                  onSelect={selectService}
+                />
+              ) : null}
+
               {service && !serviceConfirmed ? (
                 <button
                   type="button"
