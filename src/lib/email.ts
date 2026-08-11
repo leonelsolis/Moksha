@@ -34,7 +34,12 @@ export type BookingEmailData = {
   serviceName: string;
   date: string;
   startMinute: number;
-  manageUrl: string;
+  /**
+   * Link personal para ver o cancelar. Puede faltar: cuando el turno lo
+   * confirma el aviso de Mercado Pago, del token solo existe el hash en la
+   * base, así que no hay link que poner. El mail sale igual, sin esa parte.
+   */
+  manageUrl?: string;
 };
 
 export type SendResult = { sent: boolean; reason?: string };
@@ -196,9 +201,13 @@ export async function sendBookingConfirmation(data: BookingEmailData) {
          <tr><td style="padding:4px 24px 4px 0;color:#78716c">Atiende</td><td style="padding:4px 0">${esc(data.professionalName)}</td></tr>
          <tr><td style="padding:4px 24px 4px 0;color:#78716c">Servicio</td><td style="padding:4px 0">${esc(data.serviceName)}</td></tr>
        </table>
-       <p style="margin:0 0 8px">Si no vas a poder venir, avisanos desde este link:</p>
+       ${
+         data.manageUrl
+           ? `<p style="margin:0 0 8px">Si no vas a poder venir, avisanos desde este link:</p>
        <p style="margin:0 0 24px"><a href="${esc(data.manageUrl)}" style="color:#2f5d50">${esc(data.manageUrl)}</a></p>
-       <p style="font-size:13px;color:#78716c;margin:0">Guardá este mail: el link es personal y sirve para ver o cancelar tu turno.</p>`,
+       <p style="font-size:13px;color:#78716c;margin:0">Guardá este mail: el link es personal y sirve para ver o cancelar tu turno.</p>`
+           : `<p style="margin:0">Si no vas a poder venir, avisanos con tiempo desde el link de tu turno o escribinos.</p>`
+       }`,
     ),
   });
 }

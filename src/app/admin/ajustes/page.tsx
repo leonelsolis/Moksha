@@ -141,14 +141,20 @@ export default async function SettingsPage() {
                 name="contact_address"
                 className="input"
                 defaultValue={settings.contact_address}
-                placeholder="Av. Siempre Viva 742, Buenos Aires"
+                placeholder="Zuviría 7120, Rosario, Santa Fe"
                 maxLength={120}
               />
               <p className="mt-1 text-xs text-ink-muted">
                 Con esto se arma el mapa: el que acompaña a la reserva y el que
-                ve la clienta al confirmar el turno. Escribila como la buscarías
-                en Google Maps (calle, número y ciudad). Si queda vacía no
-                aparece ningún mapa.
+                ve la clienta al confirmar el turno. Si queda vacía no aparece
+                ningún mapa.{" "}
+                <strong className="font-medium text-ink-soft">
+                  Poné siempre la ciudad
+                </strong>{" "}
+                además de la calle y el número: sin ciudad, Google puede
+                confundir la provincia con la capital y marcar otro punto.
+                Después de guardar, mirá el mapa en la página de reservas para
+                confirmar que cayó donde va.
               </p>
             </div>
           </div>

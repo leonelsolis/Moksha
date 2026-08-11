@@ -160,6 +160,12 @@ const PATHS = {
       <line x1="8" y1="8" x2="8.1" y2="8" />
     </>
   ),
+  /** Carpeta: las categorías que agrupan los servicios en la web. */
+  folder: (
+    <>
+      <path d="M3.75 6.75a1.5 1.5 0 0 1 1.5-1.5h3.4a1.5 1.5 0 0 1 1.2.6l1.05 1.4h7.35a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5z" />
+    </>
+  ),
   /** Tarjeta: el cobro de la seña online. */
   card: (
     <>

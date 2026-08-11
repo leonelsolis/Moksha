@@ -18,6 +18,8 @@ import { ImageUpload } from "@/components/admin/ImageUpload";
 import { db } from "@/db";
 import { professionals, services } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth";
+import { getCategoryRows } from "@/lib/catalog";
+import { categoryOptions, type CategoryRow } from "@/lib/categories";
 
 /**
  * Alta y edición de profesionales y de los servicios que ofrece cada una.
@@ -37,12 +39,13 @@ export const metadata = { title: "Profesionales" };
 export default async function ProfessionalsPage() {
   await requireAdmin();
 
-  const [staff, allServices] = await Promise.all([
+  const [staff, allServices, categories] = await Promise.all([
     db
       .select()
       .from(professionals)
       .orderBy(asc(professionals.sortOrder), asc(professionals.name)),
     db.select().from(services).orderBy(asc(services.sortOrder), asc(services.id)),
+    getCategoryRows(),
   ]);
 
   return (
@@ -235,24 +238,37 @@ export default async function ProfessionalsPage() {
                 ) : (
                   <ul className="mb-3 divide-y divide-line rounded-sm border border-line">
                     {ownServices.map((service) => (
-                      <li key={service.id} className="flex flex-wrap items-center gap-3 p-2.5">
+                      <li key={service.id} className="flex flex-wrap items-start gap-3 p-2.5">
                         <ActionForm
                           action={saveService}
-                          className="flex min-w-0 flex-1 flex-wrap items-center gap-2"
+                          className="min-w-0 flex-1 space-y-2"
                           feedback="none"
                         >
                           <input type="hidden" name="id" value={service.id} />
                           <input type="hidden" name="professionalId" value={person.id} />
 
-                          <input
-                            name="name"
-                            defaultValue={service.name}
-                            className="input min-w-0 flex-1 py-1 text-sm"
-                            aria-label="Nombre del servicio"
-                            required
-                            maxLength={60}
-                          />
+                          {/* El nombre y la categoría arriba; los números
+                              abajo. Todo en una fila entraba cuando eran cuatro
+                              campos, no ahora. */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <input
+                              name="name"
+                              defaultValue={service.name}
+                              className="input min-w-40 flex-1 py-1 text-sm"
+                              aria-label="Nombre del servicio"
+                              required
+                              maxLength={60}
+                            />
 
+                            <CategorySelect
+                              id={`categoria-${service.id}`}
+                              categories={categories}
+                              value={service.categoryId}
+                              className="input w-52 py-1 text-sm"
+                            />
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
                           <span className="flex items-center gap-1">
                             <input
                               name="durationMinutes"
@@ -299,6 +315,17 @@ export default async function ProfessionalsPage() {
                             />
                           </span>
 
+                          <span className="flex items-center gap-1">
+                            <span className="text-xs text-ink-muted">Orden</span>
+                            <input
+                              name="sortOrder"
+                              type="number"
+                              defaultValue={service.sortOrder}
+                              className="input w-16 py-1 text-sm tabular"
+                              aria-label="Orden dentro de su categoría"
+                            />
+                          </span>
+
                           <label className="flex items-center gap-1.5 text-xs">
                             <input
                               type="checkbox"
@@ -312,6 +339,7 @@ export default async function ProfessionalsPage() {
                           <SubmitButton className="btn btn-secondary btn-sm" pendingLabel="…">
                             Guardar
                           </SubmitButton>
+                          </div>
                         </ActionForm>
 
                         <ActionForm action={deleteService} feedback="none">
@@ -389,6 +417,21 @@ export default async function ProfessionalsPage() {
                         min={0}
                         step="0.01"
                         placeholder="Opcional"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        className="field-label"
+                        htmlFor={`new-category-${person.id}`}
+                      >
+                        Categoría
+                      </label>
+                      <CategorySelect
+                        id={`new-category-${person.id}`}
+                        categories={categories}
+                        value={null}
+                        className="input w-52"
                       />
                     </div>
 
@@ -512,5 +555,44 @@ export default async function ProfessionalsPage() {
         </ActionForm>
       </section>
     </div>
+  );
+}
+
+/**
+ * En qué card del catálogo entra el servicio.
+ *
+ * Sin categoría es una opción válida y la primera de la lista: el servicio
+ * queda suelto en el primer nivel, que es donde estaban todos antes de que
+ * existiera esta pantalla. Las categorías apagadas se ofrecen igual —con la
+ * aclaración al lado—, porque asignar un servicio a una rama escondida es lo
+ * que se hace justo antes de encenderla.
+ */
+function CategorySelect({
+  id,
+  categories,
+  value,
+  className = "input",
+}: {
+  id: string;
+  categories: CategoryRow[];
+  value: number | null;
+  className?: string;
+}) {
+  return (
+    <select
+      id={id}
+      name="categoryId"
+      className={className}
+      defaultValue={value ?? ""}
+      aria-label="Categoría del servicio"
+    >
+      <option value="">— Sin categoría —</option>
+      {categoryOptions(categories).map((option) => (
+        <option key={option.id} value={option.id}>
+          {option.label}
+          {option.active ? "" : " (oculta)"}
+        </option>
+      ))}
+    </select>
   );
 }

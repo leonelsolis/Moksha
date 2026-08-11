@@ -39,6 +39,8 @@ type ServiceOption = {
   professionalId: number;
   name: string;
   durationMinutes: number;
+  /** Ruta de la categoría, ya armada. Vacía si el servicio no tiene ninguna. */
+  category: string;
 };
 
 /** Duración de un turno sin servicio elegido. La misma que asume el servidor. */
@@ -274,8 +276,11 @@ export function ManualBookingForm({
               aria-invalid={errors.serviceId ? "true" : undefined}
             >
               <option value="">Otro / a convenir</option>
+              {/* La categoría va adelante para que los de la misma línea
+                  queden juntos al leer la lista, que es como se los busca. */}
               {own.map((service) => (
                 <option key={service.id} value={service.id}>
+                  {service.category ? `${service.category} › ` : ""}
                   {service.name} · {service.durationMinutes} min
                 </option>
               ))}

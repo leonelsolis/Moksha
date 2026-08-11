@@ -9,6 +9,12 @@ import { ImageUpload } from "@/components/admin/ImageUpload";
 import { db } from "@/db";
 import { professionals, services } from "@/db/schema";
 import { professionalScope, requireUser } from "@/lib/auth";
+import { getCategoryRows } from "@/lib/catalog";
+import {
+  buildCategoryTree,
+  categoryPathLabel,
+  flattenCategories,
+} from "@/lib/categories";
 import { SERVICE_DESCRIPTION_MAX } from "@/lib/validation";
 
 /**
@@ -34,11 +40,14 @@ export default async function ServicesPage() {
   const user = await requireUser();
   const isAdmin = user.role === "admin";
 
+  const categories = await getCategoryRows();
+
   const rows = await db
     .select({
       id: services.id,
       professionalId: services.professionalId,
       professionalName: professionals.name,
+      categoryId: services.categoryId,
       name: services.name,
       durationMinutes: services.durationMinutes,
       price: services.price,
@@ -57,6 +66,27 @@ export default async function ServicesPage() {
       asc(services.id),
     );
 
+  /*
+   * En qué posición va cada categoría, leyendo el árbol de arriba abajo. Es lo
+   * que hace que la lista de acá salga en el mismo orden que las cards de la
+   * web: sin esto, dos servicios de la misma categoría podrían quedar separados
+   * por uno de otra.
+   *
+   * Los que no tienen categoría van al final, igual que en la web: primero las
+   * cards, después lo que quedó suelto.
+   */
+  const categoryRank = new Map<number, number>(
+    flattenCategories(buildCategoryTree(categories)).map((node, index) => [
+      node.id,
+      index,
+    ]),
+  );
+
+  const rankOf = (categoryId: number | null) =>
+    categoryId === null
+      ? Number.MAX_SAFE_INTEGER
+      : (categoryRank.get(categoryId) ?? Number.MAX_SAFE_INTEGER);
+
   // Agrupadas en el orden en que vienen, que ya es el de la consulta.
   const groups = new Map<number, { name: string; items: typeof rows }>();
   for (const row of rows) {
@@ -66,6 +96,12 @@ export default async function ServicesPage() {
     };
     group.items.push(row);
     groups.set(row.professionalId, group);
+  }
+
+  // El orden dentro de cada categoría ya viene de la consulta y `sort` es
+  // estable, así que reordenar por categoría no lo pisa.
+  for (const group of groups.values()) {
+    group.items.sort((a, b) => rankOf(a.categoryId) - rankOf(b.categoryId));
   }
 
   return (
@@ -111,8 +147,20 @@ export default async function ServicesPage() {
           ) : null}
 
           <ul className="divide-y divide-line">
-            {group.items.map((service) => (
+            {group.items.map((service, index) => (
               <li key={service.id} className="space-y-4 p-4">
+                {/* Encabezado de categoría: se dibuja al empezar cada grupo, o
+                    sea cuando el servicio anterior estaba en otra. Es la misma
+                    estructura que ve la clienta en las cards. */}
+                {index === 0 ||
+                group.items[index - 1].categoryId !== service.categoryId ? (
+                  <p className="eyebrow">
+                    {service.categoryId === null
+                      ? "Sin categoría"
+                      : categoryPathLabel(categories, service.categoryId)}
+                  </p>
+                ) : null}
+
                 <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                   <h3 className="text-sm font-medium">{service.name}</h3>
 

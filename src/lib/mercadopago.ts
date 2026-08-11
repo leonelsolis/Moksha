@@ -199,6 +199,11 @@ export type PreferenceInput = {
   externalReference: string;
   payerEmail?: string;
   backUrls?: { success?: string; failure?: string; pending?: string };
+  /**
+   * Devuelve al cliente al sitio solo, sin que tenga que apretar "Volver".
+   * Mercado Pago lo rechaza si `backUrls.success` no es https.
+   */
+  autoReturn?: "approved" | "all";
   /** A dónde avisa MP cuando cambia el estado del pago. */
   notificationUrl?: string;
   /**
@@ -251,6 +256,7 @@ export async function createPreference(
       external_reference: input.externalReference,
       ...(input.payerEmail ? { payer: { email: input.payerEmail } } : {}),
       ...(input.backUrls ? { back_urls: input.backUrls } : {}),
+      ...(input.autoReturn ? { auto_return: input.autoReturn } : {}),
       ...(input.notificationUrl
         ? { notification_url: input.notificationUrl }
         : {}),
@@ -285,6 +291,11 @@ export type Payment = {
  * MP: el webhook trae solo el id, y el estado se confirma preguntándoselo a la
  * API — nunca creyéndole al cuerpo de la notificación, que llega sin
  * autenticar.
+ *
+ * A propósito NO exige el interruptor encendido. El interruptor decide si se
+ * cobra de acá en adelante; un pago que ya se hizo hay que acreditarlo igual,
+ * y apagarlo justo mientras alguien estaba pagando no puede dejar a esa persona
+ * con la plata debitada y sin turno.
  */
 export async function getPayment(id: string | number): Promise<MpResult<Payment>> {
   const result = await call<{
@@ -293,7 +304,7 @@ export async function getPayment(id: string | number): Promise<MpResult<Payment>
     status_detail: string;
     external_reference: string | null;
     transaction_amount: number | null;
-  }>(`/v1/payments/${id}`);
+  }>(`/v1/payments/${id}`, { requireEnabled: false });
 
   if (!result.ok) return result;
 

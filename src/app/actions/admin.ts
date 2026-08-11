@@ -8,6 +8,7 @@ import {
   appointments,
   professionals,
   scheduleOverrides,
+  serviceCategories,
   services,
   vacations,
   workingHours,
@@ -85,6 +86,8 @@ function refreshAll() {
   revalidatePath("/admin/horarios");
   revalidatePath("/admin/profesionales");
   revalidatePath("/admin/servicios");
+  // Muestra cuántos servicios tiene cada categoría y cuáles quedaron sueltos.
+  revalidatePath("/admin/categorias");
   // Lista las señas de cada servicio, así que cambia al editar un servicio.
   revalidatePath("/admin/depositos");
 }
@@ -554,9 +557,28 @@ export async function saveService(
   const rawPrice = String(formData.get("price") ?? "").trim();
   const rawDeposit = String(formData.get("depositAmount") ?? "").trim();
   const active = formData.get("active") === "on";
+  const sortOrder = Number(formData.get("sortOrder")) || 0;
+
+  /*
+   * En qué card del catálogo entra. Vacío es "sin categoría" y es un valor
+   * legítimo: queda suelto en el primer nivel, que es como estaban todos los
+   * servicios antes de que existieran las categorías. Se comprueba que exista
+   * para que un id inventado no deje al servicio colgado de la nada.
+   */
+  const categoryId = Number(formData.get("categoryId")) || null;
 
   if (!professionalId) return error("Profesional no encontrada.");
   if (!name) return error("Poné un nombre al servicio.");
+
+  if (categoryId !== null) {
+    const [category] = await db
+      .select({ id: serviceCategories.id })
+      .from(serviceCategories)
+      .where(eq(serviceCategories.id, categoryId))
+      .limit(1);
+
+    if (!category) return error("Esa categoría no existe.");
+  }
 
   if (!Number.isFinite(duration) || duration < 5 || duration > 480) {
     return error("La duración tiene que estar entre 5 y 480 minutos.");
@@ -584,11 +606,13 @@ export async function saveService(
 
   const values = {
     professionalId,
+    categoryId,
     name,
     durationMinutes: Math.round(duration),
     price,
     depositAmount: deposit,
     active,
+    sortOrder,
   };
 
   if (id) {

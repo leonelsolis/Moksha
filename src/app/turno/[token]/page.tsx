@@ -16,7 +16,7 @@ import {
   formatTimestamp,
   minutesUntil,
 } from "@/lib/dates";
-import { formatMoney, holdIsAlive } from "@/lib/payments";
+import { formatMoney, holdIsAlive, isPaidButLost } from "@/lib/payments";
 import { getSettings, settingInt } from "@/lib/settings";
 import { hashToken, looksLikeToken } from "@/lib/tokens";
 
@@ -70,10 +70,19 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
   const isBooked = appointment.status === "booked";
   /** Pre-reserva viva: falta pagar la seña y el horario sigue retenido. */
   const isPending = holdIsAlive(appointment);
+  /**
+   * Entró la seña pero el turno no quedó: la retención se venció antes de que
+   * se acreditara el pago y el horario ya lo había tomado otra persona. Hay que
+   * devolver la plata a mano, así que se dice claramente en pantalla en vez de
+   * mostrarlo como una reserva vencida cualquiera.
+   */
+  const isPaidWithoutSlot = isPaidButLost(appointment);
+
   /** Se venció el plazo de pago, con o sin la fila ya marcada. */
   const isExpired =
-    appointment.status === "expired_payment" ||
-    (appointment.status === "pending_payment" && !isPending);
+    !isPaidWithoutSlot &&
+    (appointment.status === "expired_payment" ||
+      (appointment.status === "pending_payment" && !isPending));
 
   const cutoffHours = settingInt(settings, "cancel_cutoff_hours");
   const remainingMinutes = minutesUntil(
@@ -105,7 +114,8 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
 
   // La pre-reserva no está cancelada: el horario sigue guardado. Se muestra con
   // los datos a la vista, igual que un turno confirmado.
-  const isCancelled = !isBooked && !isPending && !isExpired;
+  const isCancelled =
+    !isBooked && !isPending && !isExpired && !isPaidWithoutSlot;
 
   return (
     <>
@@ -146,6 +156,16 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
                 <Alert tone="warning" title="Falta pagar la seña">
                   Te guardamos el horario, pero el turno queda confirmado recién
                   cuando se acredite el pago.
+                </Alert>
+              </div>
+            ) : null}
+
+            {isPaidWithoutSlot ? (
+              <div className="mb-5">
+                <Alert tone="warning" title="Recibimos tu pago, pero el horario ya no estaba">
+                  La seña entró después de que se venciera la reserva, y para
+                  entonces otra persona había tomado ese horario. Escribinos y te
+                  devolvemos la seña o te lo pasamos a otro día: lo que prefieras.
                 </Alert>
               </div>
             ) : null}

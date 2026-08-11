@@ -1,13 +1,22 @@
 import "server-only";
 
+import { revalidatePath } from "next/cache";
+import { eq } from "drizzle-orm";
+
+import { db } from "@/db";
+import { appointments, professionals } from "@/db/schema";
 import type { Appointment, Service } from "@/db/schema";
+import { conflictingAppointmentIds } from "./availability";
 import {
   createPreference,
+  getPayment,
   mercadoPagoConfig,
   type MpResult,
 } from "./mercadopago";
+import { announceNewBooking } from "./notify";
 import { getSettings, settingInt, type Settings } from "./settings";
 import { siteOrigin } from "./site-url";
+import { hashToken } from "./tokens";
 
 /**
  * La decisión de cobrar, y el armado del checkout.
@@ -120,15 +129,19 @@ export async function createDepositCheckout(
   const origin = await siteOrigin().catch(() => "");
 
   /*
-   * Mercado Pago rechaza la preferencia si las URLs de vuelta no son https, y
-   * en desarrollo el sitio es http://localhost. Sin ellas el checkout funciona
-   * igual: al terminar, la clienta se queda en la pantalla de Mercado Pago en
-   * lugar de volver sola a su turno. Es la diferencia entre poder probar el
-   * cobro en local y no poder.
+   * Las vueltas del checkout no van a la página del turno sino a `/pago/…`,
+   * que acredita el pago y recién ahí redirige. Es lo que hace que el turno
+   * quede confirmado apenas la clienta vuelve, sin depender de que el aviso de
+   * Mercado Pago llegue primero.
+   *
+   * El aviso automático (`notification_url`) solo se manda desde un sitio
+   * https: Mercado Pago tiene que poder entrar, y a `localhost` no llega. En
+   * desarrollo la vuelta por pantalla es el único camino, y alcanza para
+   * probar. `auto_return` también pide https, así que va junto.
    */
-  const canReturn = origin.startsWith("https://");
+  const isPublic = origin.startsWith("https://");
   const backUrl = (result: string) =>
-    `${origin}/turno/${appointment.token}?pago=${result}`;
+    `${origin}/pago/${appointment.token}?resultado=${result}`;
 
   const result = await createPreference({
     title: appointment.serviceName
@@ -138,14 +151,15 @@ export async function createDepositCheckout(
     externalReference: String(appointment.id),
     payerEmail: appointment.email,
     idempotencyKey: `turno-${appointment.id}`,
-    ...(canReturn
+    backUrls: {
+      success: backUrl("ok"),
+      pending: backUrl("pendiente"),
+      failure: backUrl("error"),
+    },
+    ...(isPublic
       ? {
           notificationUrl: `${origin}${MP_WEBHOOK_PATH}`,
-          backUrls: {
-            success: backUrl("ok"),
-            pending: backUrl("pendiente"),
-            failure: backUrl("error"),
-          },
+          autoReturn: "approved",
         }
       : {}),
   });
@@ -185,4 +199,219 @@ export function holdIsAlive(
     appointment.status === "pending_payment" &&
     (appointment.holdExpiresAt ?? 0) > now
   );
+}
+
+/**
+ * Se pagó pero el horario ya no está. Pasa solo si la retención venció y
+ * alguien más lo tomó antes de que se acreditara el pago; hay que devolver la
+ * plata a mano desde Mercado Pago.
+ */
+export function isPaidButLost(
+  appointment: Pick<Appointment, "status" | "paidAt">,
+) {
+  return appointment.paidAt !== null && appointment.status !== "booked";
+}
+
+/* ── Acreditación ─────────────────────────────────────────────────────── */
+
+export type Settlement =
+  /** El pago se aprobó y el turno quedó confirmado en esta llamada. */
+  | { outcome: "confirmed"; appointmentId: number }
+  /** Ya estaba confirmado. Llega acá cada vez que MP reintenta el aviso. */
+  | { outcome: "already_confirmed"; appointmentId: number }
+  /** Pago aprobado, pero el horario se lo llevó otra persona. Hay que devolver. */
+  | { outcome: "slot_taken"; appointmentId: number }
+  /** Mercado Pago todavía lo está procesando. Se estira la retención. */
+  | { outcome: "in_process"; appointmentId: number }
+  /** Rechazado o cancelado: la pre-reserva queda como estaba, para reintentar. */
+  | { outcome: "not_approved"; appointmentId: number; status: string }
+  /** No se pudo leer el pago, o el turno que dice no existe. */
+  | { outcome: "unusable"; reason: string };
+
+/**
+ * Acredita un pago de Mercado Pago y confirma el turno.
+ *
+ * Es el único lugar donde una pre-reserva pasa a turno confirmado por haber
+ * pagado, y lo llaman los dos caminos que existen para enterarse:
+ *
+ *   · El aviso automático de Mercado Pago (`/api/pagos/mercadopago`), que es el
+ *     que vale: llega aunque la clienta cierre el navegador, y se reintenta.
+ *   · La vuelta del checkout (`/pago/[token]`), que confirma en el acto sin
+ *     esperar al aviso. Es además el ÚNICO camino en desarrollo, porque a
+ *     `localhost` Mercado Pago no puede entrar.
+ *
+ * Los dos pueden llegar, y en cualquier orden: por eso es idempotente. El
+ * estado nunca se cree del cuerpo de la notificación —que llega sin autenticar—
+ * sino que se le pregunta a la API con nuestro token.
+ *
+ * No lanza nunca. Un webhook que tira 500 hace que Mercado Pago reintente en
+ * loop, y una vuelta del checkout que tira deja a la clienta viendo un error
+ * después de haber pagado.
+ */
+export async function settlePayment(
+  paymentId: string,
+  options: {
+    /**
+     * Token en claro, si quien llama lo tiene (la vuelta del checkout lo trae
+     * en la URL). Sirve para que el mail de confirmación lleve el link. Se
+     * verifica contra el hash del turno antes de usarlo: un token que no es de
+     * ese turno se ignora, no manda el link de nadie más.
+     */
+    token?: string;
+  } = {},
+): Promise<Settlement> {
+  const payment = await getPayment(paymentId);
+
+  if (!payment.ok) {
+    return { outcome: "unusable", reason: payment.reason };
+  }
+
+  const appointmentId = Number(payment.data.externalReference);
+  if (!Number.isInteger(appointmentId) || appointmentId <= 0) {
+    return {
+      outcome: "unusable",
+      reason: `El pago ${paymentId} no apunta a ningún turno.`,
+    };
+  }
+
+  const [row] = await db
+    .select({
+      appointment: appointments,
+      professionalName: professionals.name,
+    })
+    .from(appointments)
+    .innerJoin(professionals, eq(appointments.professionalId, professionals.id))
+    .where(eq(appointments.id, appointmentId))
+    .limit(1);
+
+  if (!row) {
+    return {
+      outcome: "unusable",
+      reason: `El pago ${paymentId} apunta al turno ${appointmentId}, que no existe.`,
+    };
+  }
+
+  const { appointment } = row;
+  const now = Math.floor(Date.now() / 1000);
+
+  if (payment.data.status !== "approved") {
+    /*
+     * Un pago "in_process" (por ejemplo, un débito que el banco todavía está
+     * resolviendo) puede tardar más que la retención. Se estira el plazo para
+     * no soltarle el horario a alguien que ya pagó y está esperando.
+     */
+    if (
+      payment.data.status === "in_process" ||
+      payment.data.status === "pending"
+    ) {
+      if (appointment.status === "pending_payment") {
+        await db
+          .update(appointments)
+          .set({
+            mpPaymentId: String(payment.data.id),
+            holdExpiresAt: Math.max(appointment.holdExpiresAt ?? 0, now + 86_400),
+          })
+          .where(eq(appointments.id, appointmentId));
+      }
+      return { outcome: "in_process", appointmentId };
+    }
+
+    // Rechazado, devuelto o cancelado: no se toca nada. La pre-reserva sigue en
+    // pie hasta que venza, así que se puede reintentar con otra tarjeta.
+    return {
+      outcome: "not_approved",
+      appointmentId,
+      status: payment.data.status,
+    };
+  }
+
+  /* ── De acá para abajo, el pago está aprobado ───────────────────────── */
+
+  if (appointment.status === "booked") {
+    // Ya se había acreditado. Se completan los datos del pago por si esta
+    // llamada llegó antes que la que lo confirmó, y se corta.
+    if (!appointment.paidAt) {
+      await db
+        .update(appointments)
+        .set({ mpPaymentId: String(payment.data.id), paidAt: now })
+        .where(eq(appointments.id, appointmentId));
+    }
+    return { outcome: "already_confirmed", appointmentId };
+  }
+
+  if (
+    appointment.status === "cancelled_by_client" ||
+    appointment.status === "cancelled_by_admin"
+  ) {
+    await recordLostPayment(appointmentId, payment.data.id, now);
+    return { outcome: "slot_taken", appointmentId };
+  }
+
+  /*
+   * La retención pudo vencer antes de que se acreditara el pago, y en ese hueco
+   * otra persona pudo tomar el horario. Se comprueba antes de confirmar: dos
+   * turnos encima no se arreglan con nada, y una seña de más se devuelve.
+   */
+  const conflicts = await conflictingAppointmentIds({
+    professionalId: appointment.professionalId,
+    date: appointment.date,
+    startMinute: appointment.startMinute,
+    endMinute: appointment.endMinute,
+    excludeId: appointment.id,
+  });
+
+  if (conflicts.length > 0) {
+    console.error(
+      `[pagos] el turno ${appointmentId} se pagó (pago ${payment.data.id}) pero el horario ya lo tomó otra persona. Hay que devolver la seña desde Mercado Pago.`,
+    );
+    await recordLostPayment(appointmentId, payment.data.id, now);
+    return { outcome: "slot_taken", appointmentId };
+  }
+
+  await db
+    .update(appointments)
+    .set({
+      status: "booked",
+      paidAt: now,
+      mpPaymentId: String(payment.data.id),
+      holdExpiresAt: null,
+      // El link de pago ya no sirve para nada y no tiene por qué quedar.
+      mpCheckoutUrl: null,
+    })
+    .where(eq(appointments.id, appointmentId));
+
+  /*
+   * El token en claro no está en la base: solo su hash. Quien lo tenga a mano
+   * lo pasa —la vuelta del checkout lo trae en la URL— y entonces el mail lleva
+   * el link para ver o cancelar. El aviso automático no puede, así que por ese
+   * camino el mail sale sin link.
+   */
+  const token =
+    options.token && hashToken(options.token) === appointment.cancelTokenHash
+      ? options.token
+      : null;
+
+  await announceNewBooking({
+    appointment: row.appointment,
+    professionalName: row.professionalName,
+    token,
+  });
+
+  revalidatePath("/");
+  revalidatePath("/admin");
+
+  return { outcome: "confirmed", appointmentId };
+}
+
+/** Deja anotado un pago que entró pero se quedó sin horario. */
+async function recordLostPayment(
+  appointmentId: number,
+  paymentId: number,
+  now: number,
+) {
+  await db
+    .update(appointments)
+    .set({ mpPaymentId: String(paymentId), paidAt: now, holdExpiresAt: null })
+    .where(eq(appointments.id, appointmentId))
+    .catch(() => undefined);
 }

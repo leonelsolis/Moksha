@@ -357,6 +357,43 @@ const MIGRATIONS: Migration[] = [
      * que escribir la cadena vacía en cada inserción.
      */
   ],
+
+  // ── v11 · categorías de servicios ───────────────────────────────────────
+  async (client) => [
+    /**
+     * El árbol que ordena el catálogo: "Esmaltado semipermanente" arriba y
+     * adentro los tipos que hay.
+     *
+     * `parent_id` en NULL es una categoría de primer nivel; apuntando a otra
+     * fila, una subcategoría. La profundidad no la limita la base sino el
+     * código (`CATEGORY_MAX_DEPTH`), que es donde también se comprueba que
+     * nadie arme un ciclo colgando una categoría de su propia rama.
+     *
+     * ON DELETE SET NULL es la red de seguridad, no el camino normal: borrar
+     * una categoría desde el panel primero sube lo que tenía adentro al nivel
+     * de arriba (ver `deleteCategory`), así ningún servicio desaparece del
+     * catálogo por borrar la card que lo contenía.
+     */
+    `CREATE TABLE IF NOT EXISTS service_categories (
+       id          INTEGER PRIMARY KEY AUTOINCREMENT,
+       parent_id   INTEGER REFERENCES service_categories(id) ON DELETE SET NULL,
+       name        TEXT    NOT NULL,
+       description TEXT    NOT NULL DEFAULT '',
+       sort_order  INTEGER NOT NULL DEFAULT 0,
+       active      INTEGER NOT NULL DEFAULT 1
+     )`,
+    `CREATE INDEX IF NOT EXISTS service_categories_parent_idx ON service_categories(parent_id)`,
+
+    /**
+     * En qué card entra cada servicio. Arranca en NULL en todos los que ya
+     * están cargados: sin categorías creadas el catálogo es la lista de
+     * siempre, y la web pública se ve exactamente igual que antes hasta que
+     * alguien arme la primera categoría desde el panel.
+     */
+    ...(await addColumns(client, "services", {
+      category_id: "INTEGER REFERENCES service_categories(id)",
+    })),
+  ],
 ];
 
 /**
