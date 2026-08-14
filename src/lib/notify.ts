@@ -12,6 +12,7 @@ import {
 } from "./email";
 import { siteOrigin } from "./site-url";
 import { isValidEmail, normalizeEmail } from "./validation";
+import { enqueueMessages } from "./whatsapp";
 
 /**
  * Los avisos de un turno: a la clienta y a la profesional.
@@ -123,7 +124,9 @@ export async function notifyProfessionalNewBooking(appointment: AppointmentNotic
 
 /**
  * Todo lo que se manda cuando un turno queda confirmado: el mail con el link a
- * la clienta y el aviso a la profesional.
+ * la clienta, el aviso a la profesional y los dos WhatsApp que quedan
+ * encolados (la confirmación, para hoy; el recordatorio para volver a
+ * reservar, para dentro de las semanas configuradas).
  *
  * Está junto porque hay dos momentos en los que un turno se confirma —al
  * reservar sin cobro, y cuando se aprueba la seña— y los dos tienen que avisar
@@ -131,6 +134,11 @@ export async function notifyProfessionalNewBooking(appointment: AppointmentNotic
  * guardado y la clienta ve el link en pantalla.
  */
 export async function announceNewBooking(options: {
+  /**
+   * El id del turno recién guardado. Es lo que ata los mensajes de WhatsApp al
+   * turno; sin él no se puede encolar nada.
+   */
+  appointmentId: number;
   appointment: AppointmentNotice;
   professionalName: string;
   /**
@@ -139,8 +147,14 @@ export async function announceNewBooking(options: {
    * mail sale sin link.
    */
   token: string | null;
+  /**
+   * Seña cobrada, si el turno se confirmó pagando. Solo la pasa el camino de
+   * Mercado Pago; el mail la muestra y avisa que no se devuelve.
+   */
+  depositAmount?: number | null;
 }) {
-  const { appointment, professionalName, token } = options;
+  const { appointmentId, appointment, professionalName, token, depositAmount } =
+    options;
 
   const mail = await sendBookingConfirmation({
     to: appointment.email,
@@ -149,6 +163,7 @@ export async function announceNewBooking(options: {
     serviceName: appointment.serviceName,
     date: appointment.date,
     startMinute: appointment.startMinute,
+    depositAmount: depositAmount ?? null,
     ...(token ? { manageUrl: `${await siteOrigin()}/turno/${token}` } : {}),
   }).catch((e) => ({ sent: false, reason: String(e) }));
 
@@ -157,6 +172,17 @@ export async function announceNewBooking(options: {
   }
 
   await notifyProfessionalNewBooking(appointment);
+
+  /*
+   * Los dos WhatsApp de un turno sacado por la web. Van los dos acá, aunque el
+   * recordatorio recién corresponda dentro de semanas: encolarlo ahora evita
+   * tener que salir a buscar turnos viejos todos los días.
+   */
+  await enqueueMessages({
+    appointmentId,
+    date: appointment.date,
+    kinds: ["confirmation", "rebooking"],
+  });
 }
 
 export async function notifyProfessionalCancellation(

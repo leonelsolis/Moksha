@@ -100,6 +100,16 @@ export function ServicePicker({ catalog, selected, onSelect }: Props) {
           />
         ))}
       </div>
+
+      {/* La advertencia va una sola vez al pie de la lista y no repetida en
+          cada card: es la misma para todos los servicios, y en cada card
+          competiría con el precio, que es lo que se vino a leer. Solo aparece
+          si en este nivel hay algún precio a la vista. */}
+      {node.services.some((service) => service.price != null) ? (
+        <p className="text-xs text-ink-muted">
+          El precio puede variar dependiendo de los adicionales.
+        </p>
+      ) : null}
     </div>
   );
 }

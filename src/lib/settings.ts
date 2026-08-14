@@ -38,6 +38,27 @@ export const SETTING_DEFAULTS = {
   email_enabled: "false",
   email_from: "",
 
+  /** WhatsApp ───────────────────────────────────────────────────────
+   * Los mensajes no salen solos: el sistema arma la cola y desde el panel se
+   * despachan de a uno, con un clic que abre WhatsApp con el texto escrito.
+   * Ver src/lib/whatsapp.ts.
+   */
+  whatsapp_enabled: "true",
+  /** Cuántos días después del turno se sugiere volver a reservar. */
+  whatsapp_rebook_days: "25",
+  /**
+   * Prefijo del país para armar el link, sin el +. 54 = Argentina. Los
+   * teléfonos que ya vengan con prefijo internacional se respetan.
+   */
+  whatsapp_country_code: "54",
+  /**
+   * Los textos. Admiten {nombre}, {servicio}, {fecha}, {hora}, {profesional},
+   * {negocio} y {link}; ver `MESSAGE_PLACEHOLDERS` en src/lib/whatsapp.ts.
+   * Vacío = se usa el texto de fábrica.
+   */
+  whatsapp_confirmation_text: "",
+  whatsapp_rebooking_text: "",
+
   /** Cobros online ──────────────────────────────────────────────────── */
   /**
    * Interruptor global de Mercado Pago. Apagado por defecto: la web funciona

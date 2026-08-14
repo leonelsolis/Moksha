@@ -5,6 +5,7 @@ import { Icon, type IconName } from "@/components/Icon";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { getCurrentUser } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
+import { pendingCount } from "@/lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +30,7 @@ export type AdminNavItem = {
 
 const NAV: AdminNavItem[] = [
   { href: "/admin", label: "Turnos", icon: "list", adminOnly: false },
+  { href: "/admin/mensajes", label: "Mensajes", icon: "chat", adminOnly: false },
   { href: "/admin/horarios", label: "Horarios", icon: "calendar", adminOnly: false },
   { href: "/admin/servicios", label: "Servicios", icon: "tag", adminOnly: false },
   {
@@ -68,6 +70,14 @@ export default async function AdminLayout({
     (item) => (!item.adminOnly || isAdmin) && (!item.professionalOnly || !isAdmin),
   );
 
+  /*
+   * Cuántos WhatsApp esperan. Va en la navegación porque es lo único que hace
+   * que alguien se acuerde de entrar: una cola que hay que ir a mirar a
+   * propósito es una cola que no se mira. `pendingCount` no lanza nunca, así
+   * que un problema contando no deja a nadie sin panel.
+   */
+  const pending = await pendingCount(account);
+
   return (
     <div className="flex min-h-full flex-col">
       <header className="border-b border-line bg-surface">
@@ -101,7 +111,7 @@ export default async function AdminLayout({
           </div>
         </div>
 
-        <AdminNav items={items} />
+        <AdminNav items={items} pendingMessages={pending} />
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">{children}</main>

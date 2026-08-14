@@ -107,6 +107,14 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
 
   const isNew = nuevo === "1" && isBooked;
 
+  /**
+   * Seña efectivamente cobrada. Solo con plata adentro tiene sentido avisar que
+   * no se devuelve: en un turno sin cobro online la advertencia sería sobre
+   * algo que nunca se pagó.
+   */
+  const depositPaid =
+    isBooked && appointment.paidAt !== null && (appointment.depositAmount ?? 0) > 0;
+
   // El mapa solo tiene sentido si hay a dónde ir: con el turno en pie y con una
   // dirección cargada en Ajustes.
   const address = settings.contact_address.trim();
@@ -238,15 +246,26 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
                   {appointment.firstName} {appointment.lastName}
                 </dd>
 
-                {isPending && appointment.depositAmount ? (
+                {(isPending || depositPaid) && appointment.depositAmount ? (
                   <>
-                    <dt className="text-ink-muted">Seña</dt>
+                    <dt className="text-ink-muted">
+                      {depositPaid ? "Seña pagada" : "Seña"}
+                    </dt>
                     <dd className="font-medium tabular">
                       {formatMoney(appointment.depositAmount)}
                     </dd>
                   </>
                 ) : null}
               </dl>
+
+              {/* Va acá, pegado al importe, y no en el cartel verde de recién
+                  reservado: el aviso tiene que seguir estando cada vez que se
+                  abra el link, que es cuando se piensa en cancelar. */}
+              {depositPaid ? (
+                <p className="mt-4 border-t border-line pt-3 text-xs text-ink-muted">
+                  En caso de cancelación no se reembolsa la seña.
+                </p>
+              ) : null}
             </section>
 
             {isPending ? (
@@ -273,6 +292,7 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
                   token={token}
                   canCancel={canCancel}
                   blockedReason={blockedReason}
+                  depositPaid={depositPaid}
                 />
               </div>
             ) : (

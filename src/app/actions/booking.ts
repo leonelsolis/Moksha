@@ -273,6 +273,7 @@ export async function createBooking(
   // siguiente. Lo que falle queda anotado en los logs del servidor, que es lo
   // único que explica después un mail que no llegó.
   await announceNewBooking({
+    appointmentId,
     appointment: {
       professionalId,
       date,

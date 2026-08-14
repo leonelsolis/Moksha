@@ -10,7 +10,14 @@ import { Icon } from "@/components/Icon";
  * Navegación del panel. En el celular se desplaza en horizontal en lugar de
  * apilarse, para no comerse media pantalla.
  */
-export function AdminNav({ items }: { items: AdminNavItem[] }) {
+export function AdminNav({
+  items,
+  pendingMessages = 0,
+}: {
+  items: AdminNavItem[];
+  /** WhatsApp esperando en la cola. 0 = no se dibuja el indicador. */
+  pendingMessages?: number;
+}) {
   const pathname = usePathname();
 
   return (
@@ -35,6 +42,17 @@ export function AdminNav({ items }: { items: AdminNavItem[] }) {
               >
                 <Icon name={item.icon} className="size-4" />
                 {item.label}
+
+                {/* El contador de la cola de WhatsApp. Es lo que hace que
+                    alguien se acuerde de entrar a mandarlos. */}
+                {item.href === "/admin/mensajes" && pendingMessages > 0 ? (
+                  <span
+                    className="tabular rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-medium leading-none text-white"
+                    aria-label={`${pendingMessages} mensajes sin mandar`}
+                  >
+                    {pendingMessages}
+                  </span>
+                ) : null}
               </Link>
             </li>
           );
