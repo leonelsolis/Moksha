@@ -55,6 +55,15 @@ export function ServiceInfo({ service }: { service: PublicService }) {
             ? ` · $${service.price.toLocaleString("es-AR")}`
             : ""}
         </p>
+
+        {/* La ficha queda en pantalla el resto del flujo, cuando el paso del
+            servicio ya se colapsó y su advertencia no está a la vista: por eso
+            el precio de acá lleva la suya. */}
+        {service.price != null ? (
+          <p className="mt-1 text-xs text-ink-muted">
+            El precio puede variar dependiendo de los adicionales.
+          </p>
+        ) : null}
       </div>
     </aside>
   );

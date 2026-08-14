@@ -394,6 +394,49 @@ const MIGRATIONS: Migration[] = [
       category_id: "INTEGER REFERENCES service_categories(id)",
     })),
   ],
+
+  // ── v12 · mensajes de WhatsApp ──────────────────────────────────────────
+  [
+    /**
+     * La cola de WhatsApp: qué mensaje hay que mandarle a quién y a partir de
+     * cuándo.
+     *
+     * Una fila no es un mensaje enviado sino uno *pendiente*: se crea cuando
+     * se confirma el turno —la confirmación para hoy, el recordatorio para
+     * dentro de 25 días— y el panel la muestra cuando llega su fecha.
+     *
+     * De la clienta no se guarda nada acá. El nombre, el teléfono y el
+     * servicio salen del turno con un JOIN, así que un turno que se cancela o
+     * cuyos datos se corrigen no deja un mensaje con la copia vieja.
+     *
+     * `due_date` es una fecha del negocio ('YYYY-MM-DD') y no un timestamp:
+     * "corresponde a partir del 8 de septiembre" es un día del calendario, no
+     * un instante, y así se compara directo contra el hoy del negocio sin
+     * convertir zonas horarias.
+     *
+     * El par (turno, tipo) es único: reintentar el alta de un turno no puede
+     * dejar dos recordatorios para la misma persona.
+     */
+    `CREATE TABLE IF NOT EXISTS whatsapp_messages (
+       id             INTEGER PRIMARY KEY AUTOINCREMENT,
+       appointment_id INTEGER NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+       kind           TEXT    NOT NULL,
+       due_date       TEXT    NOT NULL,
+       sent_at        INTEGER,
+       dismissed_at   INTEGER,
+       created_at     INTEGER NOT NULL DEFAULT (unixepoch())
+     )`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS whatsapp_messages_unique_idx
+       ON whatsapp_messages(appointment_id, kind)`,
+    /*
+     * Índice parcial: la pantalla del panel pregunta siempre por lo que sigue
+     * pendiente, y eso es una porción cada vez más chica de la tabla a medida
+     * que se acumulan los mensajes ya despachados.
+     */
+    `CREATE INDEX IF NOT EXISTS whatsapp_messages_pending_idx
+       ON whatsapp_messages(due_date)
+       WHERE sent_at IS NULL AND dismissed_at IS NULL`,
+  ],
 ];
 
 /**

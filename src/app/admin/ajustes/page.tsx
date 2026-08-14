@@ -9,6 +9,7 @@ import { requireAdmin } from "@/lib/auth";
 import { emailConfig } from "@/lib/email";
 import { mercadoPagoConfig } from "@/lib/mercadopago";
 import { getSettings, settingBool } from "@/lib/settings";
+import { defaultText, MESSAGE_PLACEHOLDERS } from "@/lib/whatsapp";
 
 /**
  * Configuración del negocio.
@@ -334,6 +335,143 @@ export default async function SettingsPage() {
                 dominio propio podés usar <code>onboarding@resend.dev</code>, pero
                 Resend solo lo deja llegar a tu propia casilla.
               </p>
+            </div>
+          </div>
+        </section>
+
+        {/* ── WhatsApp ──────────────────────────────────────────────── */}
+        <section className="panel overflow-hidden">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-sm font-medium">Mensajes de WhatsApp</h2>
+            <p className="mt-0.5 text-xs text-ink-soft">
+              El sistema arma la lista de a quién escribirle y redacta el
+              mensaje; en{" "}
+              <Link
+                href="/admin/mensajes"
+                className="underline underline-offset-4"
+              >
+                Mensajes
+              </Link>{" "}
+              cada fila tiene un botón que abre WhatsApp con todo cargado y solo
+              hay que apretar enviar.{" "}
+              <strong className="font-medium text-ink-soft">
+                No salen solos
+              </strong>
+              : para eso hace falta la API oficial de Meta, que exige un número
+              dedicado, verificar la empresa y se paga por mensaje.
+            </p>
+          </div>
+
+          <div className="space-y-3 p-4">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="whatsapp_enabled"
+                defaultChecked={settingBool(settings, "whatsapp_enabled")}
+                className="mt-0.5 size-4 accent-[var(--color-accent)]"
+              />
+              <span>
+                Preparar mensajes de WhatsApp
+                <span className="mt-0.5 block text-xs text-ink-muted">
+                  Si lo apagás, la pantalla de Mensajes queda vacía y deja de
+                  anotarse nada nuevo.
+                </span>
+              </span>
+            </label>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="field-label" htmlFor="whatsapp_rebook_days">
+                  A los cuántos días recordar que vuelva a reservar
+                </label>
+                <input
+                  id="whatsapp_rebook_days"
+                  name="whatsapp_rebook_days"
+                  type="number"
+                  min={1}
+                  max={365}
+                  className="input tabular"
+                  defaultValue={settings.whatsapp_rebook_days}
+                  required
+                />
+                <p className="mt-1 text-xs text-ink-muted">
+                  Se cuentan desde la fecha del turno. Con 25, a alguien que se
+                  atendió el 1 le aparece el recordatorio el 26. A quien ya
+                  tiene otro turno reservado no se le recuerda nada.
+                </p>
+              </div>
+
+              <div>
+                <label className="field-label" htmlFor="whatsapp_country_code">
+                  Prefijo del país
+                </label>
+                <input
+                  id="whatsapp_country_code"
+                  name="whatsapp_country_code"
+                  className="input tabular"
+                  defaultValue={settings.whatsapp_country_code}
+                  inputMode="numeric"
+                  maxLength={4}
+                  required
+                />
+                <p className="mt-1 text-xs text-ink-muted">
+                  Sin el +. 54 es Argentina. Se usa para armar el link cuando la
+                  clienta dejó su teléfono sin prefijo, que es lo normal; el 0 y
+                  el 15 se sacan solos.
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <label
+                className="field-label"
+                htmlFor="whatsapp_confirmation_text"
+              >
+                Mensaje de confirmación
+              </label>
+              <textarea
+                id="whatsapp_confirmation_text"
+                name="whatsapp_confirmation_text"
+                className="input"
+                rows={3}
+                defaultValue={settings.whatsapp_confirmation_text}
+                placeholder={defaultText("confirmation")}
+                maxLength={900}
+              />
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="whatsapp_rebooking_text">
+                Mensaje para volver a reservar
+              </label>
+              <textarea
+                id="whatsapp_rebooking_text"
+                name="whatsapp_rebooking_text"
+                className="input"
+                rows={3}
+                defaultValue={settings.whatsapp_rebooking_text}
+                placeholder={defaultText("rebooking")}
+                maxLength={900}
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                Los dos se pueden dejar vacíos: ahí sale el texto que ves en
+                gris. Antes de mandar cada mensaje podés retocarlo, y eso no
+                cambia lo que está guardado acá.
+              </p>
+            </div>
+
+            <div className="rounded-md border border-line bg-surface-sunken px-3 py-2">
+              <p className="text-xs font-medium text-ink-soft">
+                Podés intercalar:
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {MESSAGE_PLACEHOLDERS.map((placeholder) => (
+                  <li key={placeholder.key} className="text-xs text-ink-muted">
+                    <code className="text-ink-soft">{placeholder.key}</code> —{" "}
+                    {placeholder.label}
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
         </section>

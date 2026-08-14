@@ -21,9 +21,16 @@ type Props = {
   canCancel: boolean;
   /** Motivo por el que no se puede cancelar, si corresponde. */
   blockedReason: string | null;
+  /** Hay una seña cobrada: se avisa que cancelar no la devuelve. */
+  depositPaid?: boolean;
 };
 
-export function ManageAppointment({ token, canCancel, blockedReason }: Props) {
+export function ManageAppointment({
+  token,
+  canCancel,
+  blockedReason,
+  depositPaid = false,
+}: Props) {
   const [state, formAction] = useActionState(cancelBooking, emptyCancelState);
   const [confirming, setConfirming] = useState(false);
 
@@ -50,6 +57,9 @@ export function ManageAppointment({ token, canCancel, blockedReason }: Props) {
             <p className="mt-1 text-sm text-ink-soft">
               El horario se libera enseguida y puede tomarlo otra persona. Esto
               no se puede deshacer.
+              {depositPaid
+                ? " En caso de cancelación no se reembolsa la seña."
+                : ""}
             </p>
 
             <div className="mt-3 flex flex-wrap gap-2">

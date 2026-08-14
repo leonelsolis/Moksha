@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { Icon } from "@/components/Icon";
 import type { Settings } from "@/lib/settings";
 
 /**
@@ -29,12 +30,19 @@ export function SiteHeader({ settings }: { settings: Settings }) {
           )}
         </Link>
 
-        <Link
-          href="/cancelar"
-          className="shrink-0 text-sm text-ink-soft underline-offset-4 hover:text-ink hover:underline"
-        >
-          Mi turno
-        </Link>
+        <div className="flex shrink-0 items-center gap-3">
+          <Link
+            href="/cancelar"
+            className="text-sm text-ink-soft underline-offset-4 hover:text-ink hover:underline"
+          >
+            Mi turno
+          </Link>
+
+          <Link href="/admin" className="btn btn-secondary btn-sm">
+            <Icon name="lock" className="size-3.5" />
+            Iniciar sesión
+          </Link>
+        </div>
       </div>
     </header>
   );

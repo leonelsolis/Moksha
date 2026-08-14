@@ -378,6 +378,55 @@ export const rateLimits = sqliteTable("rate_limits", {
   resetAt: integer("reset_at").notNull(),
 });
 
+/**
+ * Cola de mensajes de WhatsApp.
+ *
+ * WhatsApp no se puede mandar solo sin la API oficial de Meta: hace falta un
+ * número dedicado, verificación del negocio, plantillas aprobadas y se paga
+ * por mensaje. En vez de eso, el sistema arma la cola —a quién escribirle,
+ * cuándo y con qué texto— y el panel la despacha con un clic por fila, que
+ * abre WhatsApp con el mensaje ya escrito.
+ *
+ * Cada fila es un mensaje *pendiente*, no uno enviado. Nacen al confirmarse el
+ * turno: la confirmación con `dueDate` de hoy y el recordatorio para volver a
+ * reservar con la fecha del turno más los días configurados.
+ *
+ * De la clienta no se copia nada: nombre, teléfono y servicio salen del turno
+ * con un JOIN. Así un turno cancelado deja de generar mensajes y una
+ * corrección de datos se ve en el texto sin tocar esta tabla.
+ */
+export const whatsappMessages = sqliteTable(
+  "whatsapp_messages",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    appointmentId: integer("appointment_id")
+      .notNull()
+      .references(() => appointments.id, { onDelete: "cascade" }),
+    /**
+     *   confirmation  el turno quedó reservado. Corresponde en el momento.
+     *   rebooking     pasaron los días de un servicio; se puede volver a
+     *                 sacar turno.
+     */
+    kind: text("kind", { enum: ["confirmation", "rebooking"] }).notNull(),
+    /**
+     * A partir de qué día corresponde mandarlo, como fecha del negocio. Es un
+     * día del calendario y no un instante, igual que la fecha de un turno.
+     */
+    dueDate: text("due_date").notNull(),
+    /** Timestamp unix de cuando se despachó. NULL = sigue pendiente. */
+    sentAt: integer("sent_at"),
+    /** Se descartó a mano desde el panel: no se manda y no vuelve a aparecer. */
+    dismissedAt: integer("dismissed_at"),
+    createdAt: integer("created_at")
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (t) => [
+    uniqueIndex("whatsapp_messages_unique_idx").on(t.appointmentId, t.kind),
+    index("whatsapp_messages_pending_idx").on(t.dueDate),
+  ],
+);
+
 export type Professional = typeof professionals.$inferSelect;
 export type ServiceCategory = typeof serviceCategories.$inferSelect;
 export type Service = typeof services.$inferSelect;
@@ -387,3 +436,5 @@ export type ScheduleOverride = typeof scheduleOverrides.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;
 export type AdminUser = typeof adminUsers.$inferSelect;
 export type PasswordReset = typeof passwordResets.$inferSelect;
+export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
+export type WhatsappKind = WhatsappMessage["kind"];

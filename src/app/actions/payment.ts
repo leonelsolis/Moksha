@@ -185,6 +185,7 @@ async function confirmWithoutCharge(appointmentId: number, token: string) {
 
   if (row) {
     await announceNewBooking({
+      appointmentId,
       appointment: row.appointment,
       professionalName: row.professionalName,
       token,

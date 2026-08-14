@@ -181,6 +181,10 @@ const PATHS = {
       <circle cx="12" cy="9.75" r="2.75" />
     </>
   ),
+  /** Globo de chat: la cola de mensajes de WhatsApp. */
+  chat: (
+    <path d="M20.5 11.5c0 4-3.8 7.25-8.5 7.25a9.7 9.7 0 0 1-2.6-.35L4.5 20l1.2-3.4A6.9 6.9 0 0 1 3.5 11.5c0-4 3.8-7.25 8.5-7.25s8.5 3.25 8.5 7.25z" />
+  ),
   /** Sombrilla: señala a una profesional de vacaciones. */
   vacation: (
     <>

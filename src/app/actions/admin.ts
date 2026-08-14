@@ -36,6 +36,7 @@ import { notifyProfessionalCancellation } from "@/lib/notify";
 import { formatMoney } from "@/lib/payments";
 import { updateSettings, type SettingKey, type Settings } from "@/lib/settings";
 import { generateToken } from "@/lib/tokens";
+import { enqueueMessages } from "@/lib/whatsapp";
 import {
   APPOINTMENT_NOTES_MAX,
   isValidEmail,
@@ -90,6 +91,8 @@ function refreshAll() {
   revalidatePath("/admin/categorias");
   // Lista las señas de cada servicio, así que cambia al editar un servicio.
   revalidatePath("/admin/depositos");
+  // La cola de WhatsApp cambia con cada turno nuevo o cancelado.
+  revalidatePath("/admin/mensajes");
 }
 
 /* ── Turnos ─────────────────────────────────────────────────────────── */
@@ -313,6 +316,16 @@ export async function createManualAppointment(
       { time: "El horario ya está ocupado." },
     );
   }
+
+  /*
+   * De un turno cargado a mano se encola el recordatorio para volver a
+   * reservar, pero no la confirmación: este turno se acordó hablando con la
+   * persona —por WhatsApp, por teléfono o en el mostrador—, así que
+   * confirmárselo por WhatsApp un minuto después es repetirle lo que acaba de
+   * decir. El recordatorio, en cambio, es igual de útil venga de donde venga
+   * el turno: dentro de un mes nadie se acuerda.
+   */
+  await enqueueMessages({ appointmentId, date, kinds: ["rebooking"] });
 
   refreshAll();
 
@@ -946,6 +959,11 @@ const EDITABLE_SETTINGS: SettingKey[] = [
   "allow_client_lookup",
   "email_enabled",
   "email_from",
+  "whatsapp_enabled",
+  "whatsapp_rebook_days",
+  "whatsapp_country_code",
+  "whatsapp_confirmation_text",
+  "whatsapp_rebooking_text",
   // Los cobros NO están acá: tienen su propia pantalla y su propia acción
   // (`saveDepositSettings`). Si estuvieran, guardar Ajustes —que no dibuja el
   // interruptor— apagaría el cobro sin que nadie lo pidiera: un checkbox que
@@ -955,6 +973,7 @@ const EDITABLE_SETTINGS: SettingKey[] = [
 const CHECKBOX_SETTINGS: SettingKey[] = [
   "allow_client_lookup",
   "email_enabled",
+  "whatsapp_enabled",
 ];
 
 export async function saveSettings(
@@ -991,6 +1010,23 @@ export async function saveSettings(
   const lead = Number(values.min_hours_before_booking);
   if (!Number.isFinite(lead) || lead < 0 || lead > 720) {
     return error("La anticipación mínima tiene que estar entre 0 y 720 horas.");
+  }
+
+  const rebook = Number(values.whatsapp_rebook_days);
+  if (!Number.isFinite(rebook) || rebook < 1 || rebook > 365) {
+    return error(
+      "Los días para recordar que vuelva a reservar tienen que estar entre 1 y 365.",
+    );
+  }
+
+  // Solo dígitos: el link de WhatsApp se arma pegando esto adelante del
+  // teléfono, y un "+54" acá dejaría el signo en el medio del número.
+  if (values.whatsapp_country_code !== undefined) {
+    const code = values.whatsapp_country_code.replace(/\D/g, "");
+    if (code.length < 1 || code.length > 4) {
+      return error("El prefijo del país tiene que tener entre 1 y 4 números.");
+    }
+    values.whatsapp_country_code = code;
   }
 
   if (!values.business_name) return error("El nombre del negocio no puede quedar vacío.");

@@ -182,13 +182,8 @@ export async function createDepositCheckout(
   return { ok: true, data: { url, preferenceId: result.data.id } };
 }
 
-/** Texto del importe, para pantalla y emails. */
-export function formatMoney(amount: number) {
-  return `$${amount.toLocaleString("es-AR", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  })}`;
-}
+/** El formato de los importes vive en `money.ts`; se reexporta por comodidad. */
+export { formatMoney } from "./money";
 
 /** ¿La pre-reserva sigue en pie o ya venció? */
 export function holdIsAlive(
@@ -392,9 +387,11 @@ export async function settlePayment(
       : null;
 
   await announceNewBooking({
+    appointmentId,
     appointment: row.appointment,
     professionalName: row.professionalName,
     token,
+    depositAmount: appointment.depositAmount,
   });
 
   revalidatePath("/");

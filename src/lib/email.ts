@@ -1,6 +1,7 @@
 import "server-only";
 
 import { formatDateLong, formatMinute } from "./dates";
+import { formatMoney } from "./money";
 import { getSettings, settingBool, type Settings } from "./settings";
 
 /**
@@ -40,6 +41,12 @@ export type BookingEmailData = {
    * base, así que no hay link que poner. El mail sale igual, sin esa parte.
    */
   manageUrl?: string;
+  /**
+   * Seña cobrada, si hubo. Con esto el mail dice cuánto se pagó y avisa que
+   * cancelar no lo devuelve. Va en `null` o sin poner cuando el turno se
+   * confirmó sin cobro, que es el caso de siempre con Mercado Pago apagado.
+   */
+  depositAmount?: number | null;
 };
 
 export type SendResult = { sent: boolean; reason?: string };
@@ -189,6 +196,9 @@ function button(url: string, label: string) {
 export async function sendBookingConfirmation(data: BookingEmailData) {
   const settings = await getSettings();
 
+  const deposit = data.depositAmount ?? 0;
+  const hasDeposit = deposit > 0;
+
   return send({
     to: data.to,
     subject: `Turno confirmado — ${formatDateLong(data.date)} a las ${formatMinute(data.startMinute)}`,
@@ -200,7 +210,19 @@ export async function sendBookingConfirmation(data: BookingEmailData) {
          <tr><td style="padding:4px 24px 4px 0;color:#78716c">Hora</td><td style="padding:4px 0"><strong>${formatMinute(data.startMinute)}</strong></td></tr>
          <tr><td style="padding:4px 24px 4px 0;color:#78716c">Atiende</td><td style="padding:4px 0">${esc(data.professionalName)}</td></tr>
          <tr><td style="padding:4px 24px 4px 0;color:#78716c">Servicio</td><td style="padding:4px 0">${esc(data.serviceName)}</td></tr>
+         ${
+           hasDeposit
+             ? `<tr><td style="padding:4px 24px 4px 0;color:#78716c">Seña pagada</td><td style="padding:4px 0"><strong>${esc(formatMoney(deposit))}</strong></td></tr>`
+             : ""
+         }
        </table>
+       ${
+         // Junto al importe y antes del link de cancelar: se lee en el mismo
+         // orden en el que después se decide cancelar.
+         hasDeposit
+           ? `<p style="margin:0 0 20px;font-size:13px;color:#78716c">En caso de cancelación no se reembolsa la seña.</p>`
+           : ""
+       }
        ${
          data.manageUrl
            ? `<p style="margin:0 0 8px">Si no vas a poder venir, avisanos desde este link:</p>
