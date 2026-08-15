@@ -55,41 +55,10 @@ export default async function MessagesPage() {
     );
   }
 
-  /*
-   * Entre que sale una versión nueva y que alguien corre `npm run db:migrate`
-   * hay una ventana en la que el código pide una tabla que todavía no existe.
-   * Sin esto, esa ventana es un error 500 sin explicación.
-   *
-   * No se devuelve una lista vacía y listo: una pantalla que se ve normal pero
-   * está rota es peor que una que falla. Se dice qué falta y cómo se arregla,
-   * que es lo único accionable, y el motivo real queda en los logs.
-   */
-  let pending: Awaited<ReturnType<typeof pendingMessages>>;
-  let sent: Awaited<ReturnType<typeof recentlySent>>;
-
-  try {
-    [pending, sent] = await Promise.all([
-      pendingMessages(user),
-      recentlySent(user),
-    ]);
-  } catch (e) {
-    console.error("[whatsapp] no se pudo leer la cola:", e);
-
-    return (
-      <div className="space-y-5">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Mensajes</h1>
-        </div>
-
-        <Alert tone="error">
-          No se pudo leer la cola de mensajes. Si acabás de actualizar el
-          sistema, falta correr las migraciones de la base:{" "}
-          <code>npm run db:migrate</code>. Todo lo demás —sacar turnos, la
-          agenda— sigue funcionando normalmente.
-        </Alert>
-      </div>
-    );
-  }
+  const [pending, sent] = await Promise.all([
+    pendingMessages(user),
+    recentlySent(user),
+  ]);
 
   const today = nowInTz(settings.timezone).date;
 
