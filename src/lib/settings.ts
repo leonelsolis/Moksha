@@ -73,6 +73,43 @@ export const SETTING_DEFAULTS = {
    * disponible. Ver src/lib/payments.ts.
    */
   mp_hold_minutes: "30",
+
+  /** Seña por transferencia ─────────────────────────────────────────
+   * El otro camino para señar, independiente de Mercado Pago: los dos pueden
+   * estar encendidos a la vez y la clienta elige. Ver src/lib/transfer.ts.
+   */
+  /**
+   * Interruptor. Apagado por defecto. Para encenderlo hace falta además el
+   * alias o el CBU cargado: sin eso no hay a dónde transferir.
+   */
+  transfer_enabled: "false",
+  /** A dónde se transfiere. Con uno de los dos alcanza; se muestran los dos. */
+  transfer_alias: "",
+  transfer_cbu: "",
+  /** A nombre de quién está la cuenta. Se muestra para dar confianza. */
+  transfer_holder: "",
+  transfer_bank: "",
+  /**
+   * Cuántos minutos se retiene el horario esperando la transferencia.
+   *
+   * De fábrica 24 horas, y no los 30 minutos de Mercado Pago, porque una
+   * transferencia depende del horario del banco: quien reserva un viernes a la
+   * noche recién puede transferir el lunes.
+   */
+  transfer_hold_minutes: "1440",
+  /**
+   * Verificación automática contra la API de Mercado Pago.
+   *
+   * Solo sirve si la cuenta que recibe las transferencias es de Mercado Pago
+   * Y su API lista los movimientos entrantes. Eso último hay que comprobarlo
+   * con una transferencia de prueba antes de encender esto; mientras esté
+   * apagado, las transferencias se aprueban con un clic desde el panel.
+   *
+   * Encendido no reemplaza la aprobación manual: la deja como respaldo para
+   * lo que el automático no puede resolver (alguien que transfiere de menos,
+   * o desde una cuenta que no es la suya).
+   */
+  transfer_auto_verify: "false",
 } as const;
 
 export type SettingKey = keyof typeof SETTING_DEFAULTS;

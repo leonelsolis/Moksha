@@ -280,6 +280,42 @@ export const appointments = sqliteTable(
     paidAt: integer("paid_at"),
     /** Hasta cuándo la pre-reserva retiene el horario (timestamp unix). */
     holdExpiresAt: integer("hold_expires_at"),
+
+    /* ── Seña por transferencia ───────────────────────────────────────
+     * NULL en todo turno que no se cobró por transferencia. Ver
+     * src/lib/transfer.ts.
+     */
+    /**
+     * Por dónde se cobra este turno.
+     *
+     * NULL es lo que ya existe: turnos cobrados por Mercado Pago —que se
+     * reconocen por `mpPaymentId`— o sin cobro. Se completa solo en los
+     * turnos nuevos, así que su ausencia nunca significa un dato perdido.
+     */
+    paymentMethod: text("payment_method", {
+      enum: ["mercadopago", "transfer"],
+    }),
+    /**
+     * El importe exacto que se le pidió transferir, con centavos únicos.
+     *
+     * No es lo mismo que `depositAmount`: la seña del servicio son $5.000 y
+     * lo que se pide transferir es $5.000,37. Esos centavos son lo que
+     * identifica el movimiento cuando entra a la cuenta. Ver
+     * `assignTransferAmount`.
+     */
+    transferAmount: real("transfer_amount"),
+    /** Cuándo la clienta declaró haber transferido. */
+    transferDeclaredAt: integer("transfer_declared_at"),
+    /** Cuándo se resolvió, se haya aprobado o rechazado. */
+    transferReviewedAt: integer("transfer_reviewed_at"),
+    /**
+     * Qué cuenta del panel lo aprobó. NULL si lo acreditó el verificador
+     * automático. Igual que `createdByUserId`, es un id suelto y no una clave
+     * foránea: el turno tiene que sobrevivir a que esa cuenta se borre.
+     */
+    transferReviewedBy: integer("transfer_reviewed_by"),
+    /** El movimiento de Mercado Pago que lo matcheó, si fue automático. */
+    transferMpPaymentId: text("transfer_mp_payment_id"),
   },
   (t) => [
     uniqueIndex("appointments_cancel_token_idx").on(t.cancelTokenHash),

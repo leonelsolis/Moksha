@@ -437,6 +437,70 @@ const MIGRATIONS: Migration[] = [
        ON whatsapp_messages(due_date)
        WHERE sent_at IS NULL AND dismissed_at IS NULL`,
   ],
+
+  // ── v13 · seña por transferencia ────────────────────────────────────────
+  async (client) => [
+    /**
+     * Cobrar la seña por transferencia bancaria, además de Mercado Pago.
+     *
+     * El problema de fondo de una transferencia es que llega anónima: el
+     * dinero entra a la cuenta sin ningún dato que diga a qué turno
+     * corresponde. Dos clientas que señan $5.000 el mismo día producen dos
+     * movimientos idénticos.
+     *
+     * La solución es `transfer_amount`: el importe que se le pide a cada
+     * clienta lleva centavos propios —$5.000,37 y no $5.000— y esos centavos
+     * son únicos entre las transferencias que están esperando. El monto pasa a
+     * ser el identificador, y así el movimiento se puede atribuir a un turno
+     * sin ambigüedad.
+     *
+     * Eso sirve para las dos formas de acreditar:
+     *
+     *   · A mano, desde el panel: quien aprueba compara el monto exacto y sabe
+     *     de quién es sin revisar el homebanking.
+     *   · Sola, si la cuenta que recibe es de Mercado Pago y su API lista las
+     *     transferencias entrantes: se busca el movimiento por importe exacto.
+     *
+     * `payment_method` distingue por dónde se cobró este turno. NULL en todo
+     * lo que ya existe, que es justamente lo que se cobró por Mercado Pago o
+     * no se cobró.
+     */
+    ...(await addColumns(client, "appointments", {
+      payment_method: "TEXT",
+      transfer_amount: "REAL",
+      /** Cuándo la clienta declaró que ya transfirió. */
+      transfer_declared_at: "INTEGER",
+      /** Cuándo se resolvió, se haya aprobado o rechazado. */
+      transfer_reviewed_at: "INTEGER",
+      /** Qué cuenta del panel la aprobó. NULL si la acreditó el automático. */
+      transfer_reviewed_by: "INTEGER",
+      /** El movimiento de Mercado Pago que la matcheó, si fue automático. */
+      transfer_mp_payment_id: "TEXT",
+    })),
+
+    /**
+     * Índice parcial sobre el importe: es exactamente la pregunta que hace el
+     * verificador automático —"¿hay alguna transferencia esperando este monto
+     * exacto?"— y la que usa el reparto de centavos para no repetir uno que ya
+     * está en uso. Solo entran las que todavía esperan, que son unas pocas
+     * filas aunque la tabla tenga años de turnos encima.
+     */
+    `CREATE INDEX IF NOT EXISTS appointments_transfer_pending_idx
+       ON appointments(transfer_amount)
+       WHERE payment_method = 'transfer' AND status = 'pending_payment'`,
+
+    /**
+     * Apagado de fábrica, igual que Mercado Pago: la web sigue funcionando
+     * como hasta ahora hasta que se carguen los datos de la cuenta y se
+     * encienda.
+     *
+     * La retención es de 24 horas y no de los 30 minutos de Mercado Pago
+     * porque una transferencia depende del horario bancario: quien reserva un
+     * viernes a la noche transfiere el lunes.
+     */
+    `INSERT OR IGNORE INTO settings (key, value) VALUES ('transfer_enabled', 'false')`,
+    `INSERT OR IGNORE INTO settings (key, value) VALUES ('transfer_hold_minutes', '1440')`,
+  ],
 ];
 
 /**

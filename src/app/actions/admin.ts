@@ -1130,6 +1130,71 @@ export async function saveDepositSettings(
 }
 
 /**
+ * Los datos de la cuenta que recibe las transferencias.
+ *
+ * Es independiente del interruptor de Mercado Pago: los dos medios pueden
+ * estar encendidos a la vez y la clienta elige al reservar.
+ *
+ * El alias y el CBU sí se guardan en la base, a diferencia del token de
+ * Mercado Pago. No es una credencial: es un dato público que se le muestra a
+ * cualquiera que reserve, del mismo modo que la dirección del local. Lo que un
+ * alias permite es que le manden plata a uno.
+ */
+export async function saveTransferSettings(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  await requireAdmin();
+
+  const read = (key: string) => String(formData.get(key) ?? "").trim();
+
+  const enabled = formData.get("transfer_enabled") === "on";
+  const alias = read("transfer_alias");
+  const cbu = read("transfer_cbu").replace(/\s/g, "");
+
+  /*
+   * Encender sin destino no serviría de nada: la pantalla de la clienta diría
+   * "transferí" sin decir a dónde. Se rechaza acá en vez de guardar una
+   * configuración que después no se ofrece y no se entiende por qué.
+   */
+  if (enabled && !alias && !cbu) {
+    return error(
+      "Para cobrar por transferencia hace falta cargar el alias o el CBU de la cuenta.",
+    );
+  }
+
+  if (cbu && !/^\d{22}$/.test(cbu)) {
+    return error("El CBU tiene que ser de 22 dígitos, sin espacios ni guiones.");
+  }
+
+  const minutes = Number(read("transfer_hold_minutes"));
+  if (!Number.isFinite(minutes) || minutes < 60 || minutes > 10080) {
+    return error(
+      "El plazo para transferir tiene que estar entre 1 hora (60) y una semana (10080).",
+    );
+  }
+
+  await updateSettings({
+    transfer_enabled: enabled ? "true" : "false",
+    transfer_alias: alias,
+    transfer_cbu: cbu,
+    transfer_holder: read("transfer_holder"),
+    transfer_bank: read("transfer_bank"),
+    transfer_hold_minutes: String(Math.round(minutes)),
+    transfer_auto_verify:
+      formData.get("transfer_auto_verify") === "on" ? "true" : "false",
+  });
+
+  refreshAll();
+  revalidatePath("/admin/depositos");
+  revalidatePath("/admin/transferencias");
+
+  return enabled
+    ? ok("Cobro por transferencia activado.")
+    : ok("Cobro por transferencia desactivado.");
+}
+
+/**
  * Prueba de credenciales. Le pregunta a Mercado Pago de quién es el token, sin
  * generar ningún cobro, y funciona con el interruptor apagado: sirve para
  * verificar la configuración antes de encenderla.

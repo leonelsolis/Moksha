@@ -5,6 +5,7 @@ import { Icon, type IconName } from "@/components/Icon";
 import { AdminNav } from "@/components/admin/AdminNav";
 import { getCurrentUser } from "@/lib/auth";
 import { getSettings } from "@/lib/settings";
+import { pendingTransferCount } from "@/lib/transfer";
 import { pendingCount } from "@/lib/whatsapp";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +32,12 @@ export type AdminNavItem = {
 const NAV: AdminNavItem[] = [
   { href: "/admin", label: "Turnos", icon: "list", adminOnly: false },
   { href: "/admin/mensajes", label: "Mensajes", icon: "chat", adminOnly: false },
+  {
+    href: "/admin/transferencias",
+    label: "Transferencias",
+    icon: "card",
+    adminOnly: false,
+  },
   { href: "/admin/horarios", label: "Horarios", icon: "calendar", adminOnly: false },
   { href: "/admin/servicios", label: "Servicios", icon: "tag", adminOnly: false },
   {
@@ -76,7 +83,16 @@ export default async function AdminLayout({
    * propósito es una cola que no se mira. `pendingCount` no lanza nunca, así
    * que un problema contando no deja a nadie sin panel.
    */
-  const pending = await pendingCount(account);
+  const [pending, pendingTransfers] = await Promise.all([
+    pendingCount(account),
+    /*
+     * Y cuántas transferencias esperan que alguien las verifique. Es la misma
+     * idea que la cola de WhatsApp, pero acá el costo de no mirar es más alto:
+     * del otro lado hay una clienta que ya transfirió y todavía no tiene el
+     * turno confirmado. Tampoco lanza nunca.
+     */
+    pendingTransferCount(account),
+  ]);
 
   return (
     <div className="flex min-h-full flex-col">
@@ -111,7 +127,11 @@ export default async function AdminLayout({
           </div>
         </div>
 
-        <AdminNav items={items} pendingMessages={pending} />
+        <AdminNav
+          items={items}
+          pendingMessages={pending}
+          pendingTransfers={pendingTransfers}
+        />
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">{children}</main>

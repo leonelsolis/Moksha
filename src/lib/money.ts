@@ -13,3 +13,18 @@ export function formatMoney(amount: number) {
     maximumFractionDigits: 2,
   })}`;
 }
+
+/**
+ * Importe con los centavos siempre a la vista.
+ *
+ * Es el formato de las transferencias, y los centavos no son decoración: son
+ * lo que identifica de quién es el dinero que entró. Un "$5.000" donde debía
+ * decir "$5.000,37" convierte un pago identificable en uno anónimo, así que
+ * acá los dos decimales no son opcionales.
+ */
+export function formatMoneyExact(amount: number) {
+  return `$${amount.toLocaleString("es-AR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}

@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { asc, eq } from "drizzle-orm";
 
-import { saveDepositSettings, testMercadoPagoAction } from "@/app/actions/admin";
+import {
+  saveDepositSettings,
+  saveTransferSettings,
+  testMercadoPagoAction,
+} from "@/app/actions/admin";
 import { Icon } from "@/components/Icon";
 import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
 import { DepositForm } from "@/components/admin/DepositForm";
@@ -11,6 +15,7 @@ import { requireAdmin } from "@/lib/auth";
 import { mercadoPagoConfig } from "@/lib/mercadopago";
 import { depositFor, formatMoney, holdMinutes } from "@/lib/payments";
 import { getSettings } from "@/lib/settings";
+import { transferConfig } from "@/lib/transfer";
 
 /**
  * Señas y cobros online.
@@ -35,6 +40,7 @@ export default async function DepositsPage() {
 
   const settings = await getSettings();
   const mp = mercadoPagoConfig(settings);
+  const transfer = transferConfig(settings);
 
   const rows = await db
     .select({
@@ -61,7 +67,7 @@ export default async function DepositsPage() {
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Señas y cobros</h1>
         <p className="mt-0.5 text-sm text-ink-soft">
-          Si se cobra una seña por Mercado Pago al reservar, y cuánto.
+          Si se cobra una seña al reservar, por dónde se paga y cuánto.
         </p>
       </div>
 
@@ -95,6 +101,159 @@ export default async function DepositsPage() {
             <SubmitButton className="btn btn-secondary" pendingLabel="Probando…">
               <Icon name="link" className="size-4" />
               Probar conexión
+            </SubmitButton>
+          </ActionForm>
+        </div>
+      </section>
+
+      {/* ── Transferencia bancaria ─────────────────────────────────────
+          El otro medio para señar, independiente de Mercado Pago. Los dos
+          pueden estar encendidos: la clienta elige al reservar. */}
+      <section className="panel overflow-hidden">
+        <div className="border-b border-line px-4 py-3">
+          <h2 className="text-sm font-medium">Seña por transferencia</h2>
+          <p className="mt-0.5 text-xs text-ink-soft">
+            A cada clienta se le pide un importe con centavos propios —$5.000,37
+            y no $5.000— para poder reconocer su transferencia entre las demás.
+            Las que llegan se verifican en{" "}
+            <Link
+              href="/admin/transferencias"
+              className="underline underline-offset-4"
+            >
+              Transferencias
+            </Link>
+            .
+          </p>
+        </div>
+
+        <div className="p-4">
+          <ActionForm action={saveTransferSettings} className="space-y-4">
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="transfer_enabled"
+                defaultChecked={transfer.enabled}
+                className="mt-0.5 size-4 accent-[var(--color-accent)]"
+              />
+              <span>
+                Aceptar seña por transferencia
+                <span className="mt-0.5 block text-xs text-ink-muted">
+                  Aparece como opción al reservar, junto a Mercado Pago si está
+                  encendido. Solo en los servicios que tengan seña cargada.
+                </span>
+              </span>
+            </label>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="field-label" htmlFor="transfer_alias">
+                  Alias
+                </label>
+                <input
+                  id="transfer_alias"
+                  name="transfer_alias"
+                  className="input"
+                  defaultValue={transfer.alias}
+                  placeholder="moksha.turnos"
+                  maxLength={60}
+                />
+              </div>
+
+              <div>
+                <label className="field-label" htmlFor="transfer_cbu">
+                  CBU o CVU
+                </label>
+                <input
+                  id="transfer_cbu"
+                  name="transfer_cbu"
+                  className="input tabular"
+                  defaultValue={transfer.cbu}
+                  placeholder="0000003100000000000000"
+                  inputMode="numeric"
+                  maxLength={22}
+                />
+              </div>
+
+              <div>
+                <label className="field-label" htmlFor="transfer_holder">
+                  Titular de la cuenta
+                </label>
+                <input
+                  id="transfer_holder"
+                  name="transfer_holder"
+                  className="input"
+                  defaultValue={transfer.holder}
+                  maxLength={80}
+                />
+              </div>
+
+              <div>
+                <label className="field-label" htmlFor="transfer_bank">
+                  Banco o billetera
+                </label>
+                <input
+                  id="transfer_bank"
+                  name="transfer_bank"
+                  className="input"
+                  defaultValue={transfer.bank}
+                  placeholder="Mercado Pago"
+                  maxLength={60}
+                />
+              </div>
+            </div>
+
+            <p className="text-xs text-ink-muted">
+              Con uno de los dos alcanza. Lo que cargues es lo que ve la clienta
+              en la pantalla de su turno, así que conviene que el titular
+              coincida con el nombre que le va a aparecer al transferir.
+            </p>
+
+            <div className="sm:max-w-xs">
+              <label className="field-label" htmlFor="transfer_hold_minutes">
+                Cuánto tiempo se le guarda el horario (minutos)
+              </label>
+              <input
+                id="transfer_hold_minutes"
+                name="transfer_hold_minutes"
+                type="number"
+                min={60}
+                max={10080}
+                className="input tabular"
+                defaultValue={transfer.holdMinutes}
+                required
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                1440 = un día, que es lo recomendado: una transferencia depende
+                del horario del banco, y quien reserva un viernes a la noche
+                recién puede pagar el lunes. Vencido el plazo, el horario vuelve
+                a estar disponible.
+              </p>
+            </div>
+
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="transfer_auto_verify"
+                defaultChecked={transfer.autoVerify}
+                className="mt-0.5 size-4 accent-[var(--color-accent)]"
+              />
+              <span>
+                Verificar las transferencias automáticamente
+                <span className="mt-0.5 block text-xs text-ink-muted">
+                  Busca en Mercado Pago las transferencias entrantes y confirma
+                  sola la que coincide al centavo.{" "}
+                  <strong className="font-medium text-ink-soft">
+                    Solo encendelo si la cuenta que recibe es de Mercado Pago y
+                    ya comprobaste que sus movimientos aparecen en la API
+                  </strong>
+                  ; con esto apagado, las transferencias se confirman con un
+                  clic desde el panel, que funciona siempre.
+                </span>
+              </span>
+            </label>
+
+            <SubmitButton className="btn btn-primary">
+              Guardar transferencia
             </SubmitButton>
           </ActionForm>
         </div>

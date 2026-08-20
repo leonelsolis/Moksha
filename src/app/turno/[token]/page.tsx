@@ -7,6 +7,7 @@ import { Icon } from "@/components/Icon";
 import { LocationCard } from "@/components/public/LocationCard";
 import { ManageAppointment } from "@/components/public/ManageAppointment";
 import { PendingPayment } from "@/components/public/PendingPayment";
+import { PendingTransfer } from "@/components/public/PendingTransfer";
 import { SiteFooter, SiteHeader } from "@/components/public/SiteChrome";
 import { db } from "@/db";
 import { appointments, professionals } from "@/db/schema";
@@ -14,10 +15,13 @@ import {
   formatDateLong,
   formatMinute,
   formatTimestamp,
+  formatTimestampLong,
   minutesUntil,
 } from "@/lib/dates";
+import { formatMoneyExact } from "@/lib/money";
 import { formatMoney, holdIsAlive, isPaidButLost } from "@/lib/payments";
 import { getSettings, settingInt } from "@/lib/settings";
+import { transferConfig } from "@/lib/transfer";
 import { hashToken, looksLikeToken } from "@/lib/tokens";
 
 /**
@@ -106,6 +110,15 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
   }
 
   const isNew = nuevo === "1" && isBooked;
+
+  /*
+   * Los datos de la cuenta se leen siempre, no solo cuando hacen falta: son
+   * cuatro campos de una tabla que ya está cargada, y así la condición de
+   * abajo queda en una línea legible.
+   */
+  const transfer = transferConfig(settings);
+  const isAwaitingTransfer =
+    isPending && appointment.paymentMethod === "transfer";
 
   /**
    * Seña efectivamente cobrada. Solo con plata adentro tiene sentido avisar que
@@ -270,15 +283,38 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
 
             {isPending ? (
               <div className="mt-5 space-y-4">
-                <PendingPayment
-                  token={token}
-                  amount={formatMoney(appointment.depositAmount ?? 0)}
-                  holdUntil={formatTimestamp(
-                    appointment.holdExpiresAt ?? 0,
-                    settings.timezone,
-                  )}
-                  awaitingApproval={pago === "ok" || pago === "pendiente"}
-                />
+                {/*
+                  Los dos caminos de una pre-reserva. La diferencia no es
+                  cosmética: en Mercado Pago el botón lleva al checkout y la
+                  confirmación llega sola; en una transferencia lo único que se
+                  puede hacer desde acá es mostrar a dónde transferir y cuánto
+                  exacto.
+                */}
+                {isAwaitingTransfer ? (
+                  <PendingTransfer
+                    token={token}
+                    amount={formatMoneyExact(appointment.transferAmount ?? 0)}
+                    alias={transfer.alias}
+                    cbu={transfer.cbu}
+                    holder={transfer.holder}
+                    bank={transfer.bank}
+                    holdUntil={formatTimestampLong(
+                      appointment.holdExpiresAt ?? 0,
+                      settings.timezone,
+                    )}
+                    declared={appointment.transferDeclaredAt !== null}
+                  />
+                ) : (
+                  <PendingPayment
+                    token={token}
+                    amount={formatMoney(appointment.depositAmount ?? 0)}
+                    holdUntil={formatTimestamp(
+                      appointment.holdExpiresAt ?? 0,
+                      settings.timezone,
+                    )}
+                    awaitingApproval={pago === "ok" || pago === "pendiente"}
+                  />
+                )}
 
                 <ManageAppointment
                   token={token}

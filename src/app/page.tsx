@@ -13,7 +13,9 @@ import {
   hasServiceInfo,
   type PublicProfessionalView,
 } from "@/lib/public-types";
+import { mercadoPagoConfig } from "@/lib/mercadopago";
 import { getSettings, settingInt } from "@/lib/settings";
+import { transferConfig } from "@/lib/transfer";
 import { staticSiteOrigin } from "@/lib/site-url";
 import { businessDescription, businessJsonLd } from "@/lib/structured-data";
 
@@ -89,6 +91,7 @@ export default async function HomePage() {
         // El interruptor del panel se resuelve acá: con la foto desactivada, su
         // dirección ni siquiera llega al navegador.
         photoUrl: service.showPhoto ? service.photoUrl : null,
+        depositAmount: service.depositAmount,
       })),
       categories,
     );
@@ -105,6 +108,19 @@ export default async function HomePage() {
       catalog,
     };
   });
+
+  /*
+   * Qué medios de seña se pueden ofrecer hoy. Se resuelve en el servidor y
+   * viaja como dos booleanos: ni el token de Mercado Pago ni el alias de la
+   * cuenta tienen por qué llegar al navegador.
+   *
+   * Son independientes: pueden estar los dos, uno solo o ninguno. Sin ninguno,
+   * el paso de datos se ve como siempre y el turno se confirma sin cobrar.
+   */
+  const paymentMethods = {
+    mercadopago: mercadoPagoConfig(settings).ready,
+    transfer: transferConfig(settings).ready,
+  };
 
   const everyoneOnVacation =
     views.length > 0 && views.every((item) => item.onVacation);
@@ -200,6 +216,7 @@ export default async function HomePage() {
             professionals={views}
             window={{ today, lastDate: window.to }}
             cancelCutoffHours={settingInt(settings, "cancel_cutoff_hours")}
+            payment={paymentMethods}
             location={
               showMap ? (
                 <LocationCard

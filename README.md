@@ -315,6 +315,65 @@ el nombre del negocio en texto en lugar del logo.
 
 ---
 
+## Cobrar la seña por transferencia
+
+Además de Mercado Pago, la seña se puede cobrar por transferencia bancaria.
+Los dos medios conviven: si están los dos encendidos, la clienta elige al
+reservar.
+
+Se configura en **Señas y cobros** del panel: alias o CBU, titular, banco y
+cuánto tiempo se le guarda el horario (1440 minutos = un día, que es lo
+recomendado: una transferencia depende del horario del banco).
+
+### El truco de los centavos
+
+Una transferencia llega anónima: en la cuenta solo aparece "entraron $5.000",
+sin ningún dato que diga de quién es. Si dos clientas señan lo mismo el mismo
+día, los movimientos son idénticos.
+
+Por eso a cada una se le pide un importe con **centavos propios** —$5.000,37 y
+no $5.000— únicos entre las transferencias que están esperando. El monto pasa a
+ser el identificador que la transferencia no trae, y no depende de que la
+clienta complete bien ningún concepto: solo de que transfiera el número que ve
+en pantalla.
+
+En **Transferencias** del panel aparece cada reserva con su importe exacto al
+lado del nombre. Se compara con la cuenta y se confirma con un clic; al
+confirmar sale el mail de turno confirmado y se encola el WhatsApp, igual que
+en cualquier turno pago.
+
+### Verificación automática (opcional)
+
+Si la cuenta que recibe es de Mercado Pago, se pueden acreditar solas: cada
+diez minutos se buscan las transferencias entrantes y se confirma la que
+coincide al centavo. Solo acredita coincidencias exactas; todo lo demás queda
+para que lo resuelva una persona.
+
+**Antes de encenderlo hay que comprobar que funcione con la cuenta real**, así:
+
+```bash
+curl -s -H "Authorization: Bearer $MERCADOPAGO_ACCESS_TOKEN" \
+  "https://api.mercadopago.com/v1/payments/search?sort=date_created&criteria=desc&limit=10"
+```
+
+Transferite $1 al alias de esa cuenta y volvé a correrlo. Si el movimiento
+aparece en la respuesta, la verificación automática sirve y se puede encender
+en Señas y cobros. Si no aparece, dejala apagada: la aprobación con un clic
+desde el panel funciona siempre.
+
+Necesita `CRON_SECRET` en las variables de entorno. En Vercel el cron ya está
+declarado en `vercel.json`; en cualquier otro lado, un cron del sistema que
+haga:
+
+```bash
+curl -H "Authorization: Bearer $CRON_SECRET" https://tu-dominio/api/pagos/transferencias
+```
+
+Con la verificación automática apagada este endpoint no hace nada, así que se
+puede dejar programado igual.
+
+---
+
 ## Variables de entorno
 
 Copiá `.env.example` a `.env`. La única obligatoria para desarrollo es
@@ -325,6 +384,9 @@ openssl rand -base64 32
 ```
 
 Si se cambia, se cierran todas las sesiones abiertas del panel.
+
+`CRON_SECRET` hace falta solo si se usa la verificación automática de
+transferencias. Se genera igual que `AUTH_SECRET`.
 
 ---
 
