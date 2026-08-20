@@ -13,10 +13,13 @@ import { Icon } from "@/components/Icon";
 export function AdminNav({
   items,
   pendingMessages = 0,
+  pendingTransfers = 0,
 }: {
   items: AdminNavItem[];
   /** WhatsApp esperando en la cola. 0 = no se dibuja el indicador. */
   pendingMessages?: number;
+  /** Transferencias esperando verificación. 0 = no se dibuja el indicador. */
+  pendingTransfers?: number;
 }) {
   const pathname = usePathname();
 
@@ -51,6 +54,17 @@ export function AdminNav({
                     aria-label={`${pendingMessages} mensajes sin mandar`}
                   >
                     {pendingMessages}
+                  </span>
+                ) : null}
+
+                {/* Lo mismo para las transferencias sin verificar. Del otro
+                    lado hay alguien que ya pagó y espera la confirmación. */}
+                {item.href === "/admin/transferencias" && pendingTransfers > 0 ? (
+                  <span
+                    className="tabular rounded-full bg-accent px-1.5 py-0.5 text-[11px] font-medium leading-none text-white"
+                    aria-label={`${pendingTransfers} transferencias sin verificar`}
+                  >
+                    {pendingTransfers}
                   </span>
                 ) : null}
               </Link>

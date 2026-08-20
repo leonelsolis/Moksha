@@ -19,10 +19,15 @@ import {
   announceNewBooking,
   notifyProfessionalCancellation,
 } from "@/lib/notify";
-import { createDepositCheckout, paymentPlanFor } from "@/lib/payments";
+import { createDepositCheckout, depositFor, paymentPlanFor } from "@/lib/payments";
 import { checkRateLimit, clientKey } from "@/lib/rate-limit";
 import { getSettings, settingBool, settingInt } from "@/lib/settings";
 import { generateCancelToken, hashToken, looksLikeToken } from "@/lib/tokens";
+import {
+  assignTransferAmount,
+  transferAvailableFor,
+  transferHoldMinutes,
+} from "@/lib/transfer";
 import {
   normalizeDni,
   normalizeEmail,
@@ -150,8 +155,43 @@ export async function createBooking(
   const plan = await paymentPlanFor(service, settings);
 
   const now = Math.floor(Date.now() / 1000);
-  const holdExpiresAt = plan.charge ? now + plan.holdMinutes * 60 : null;
-  const depositAmount = plan.charge ? plan.amount : null;
+
+  /*
+   * ¿Y por dónde se cobra?
+   *
+   * La clienta eligió en el formulario, pero lo que llega del navegador es una
+   * intención y no una autorización: se vuelve a comprobar contra la
+   * configuración de ahora. Un campo manipulado, o una transferencia que se
+   * apagó en Ajustes mientras la pantalla estaba abierta, no puede meter un
+   * turno por un camino que el negocio no tiene habilitado.
+   *
+   * `assignTransferAmount` puede devolver null si no quedan centavos libres
+   * (ver `transfer.ts`). En ese caso no se inventa un importe ambiguo: se cae
+   * al camino de Mercado Pago, o al de sin cobro si tampoco está.
+   */
+  const wantsTransfer = String(formData.get("paymentMethod") ?? "") === "transfer";
+
+  const transferAmount =
+    wantsTransfer && (await transferAvailableFor(service, settings))
+      ? await assignTransferAmount(depositFor(service), now)
+      : null;
+
+  const byTransfer = transferAmount !== null;
+
+  const holdExpiresAt = byTransfer
+    ? now + transferHoldMinutes(settings) * 60
+    : plan.charge
+      ? now + plan.holdMinutes * 60
+      : null;
+
+  const depositAmount = byTransfer
+    ? depositFor(service)
+    : plan.charge
+      ? plan.amount
+      : null;
+
+  /** Retiene el horario todo lo que no se confirme en el acto. */
+  const isPreBooking = byTransfer || plan.charge;
 
   // Las pre-reservas vencidas de ese día se dan de baja antes de intentar el
   // alta: el índice único cuenta a las 'pending_payment', así que una que quedó
@@ -171,8 +211,9 @@ export async function createBooking(
       sql: `INSERT INTO appointments
               (professional_id, service_id, service_name, date, start_minute,
                end_minute, status, first_name, last_name, dni, email, phone,
-               cancel_token_hash, deposit_amount, hold_expires_at, created_at)
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch()
+               cancel_token_hash, deposit_amount, hold_expires_at,
+               payment_method, transfer_amount, created_at)
+            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch()
             WHERE NOT EXISTS (
               SELECT 1 FROM appointments
                WHERE professional_id = ? AND date = ?
@@ -188,7 +229,7 @@ export async function createBooking(
         date,
         startMinute,
         endMinute,
-        plan.charge ? "pending_payment" : "booked",
+        isPreBooking ? "pending_payment" : "booked",
         value.firstName,
         value.lastName,
         value.dni,
@@ -197,6 +238,8 @@ export async function createBooking(
         hash,
         depositAmount,
         holdExpiresAt,
+        byTransfer ? "transfer" : plan.charge ? "mercadopago" : null,
+        transferAmount,
         professionalId,
         date,
         now,
@@ -226,6 +269,22 @@ export async function createBooking(
    * una seña que no se cobró se arregla cobrando en el local, pero una reserva
    * que no se pudo hacer es una clienta perdida. Queda el motivo en los logs.
    */
+  /*
+   * Camino de la transferencia: no hay a dónde mandarla, así que se va a la
+   * pantalla de su turno, que es la que muestra el alias y el importe exacto.
+   *
+   * No se manda ningún aviso todavía. El turno no está confirmado —falta que
+   * entre la plata— y anunciar por mail un turno que puede no concretarse es
+   * exactamente la confusión que hay que evitar. Los avisos salen al
+   * acreditarse, desde `confirmTransfer`.
+   */
+  if (byTransfer) {
+    revalidatePath("/");
+    revalidatePath("/admin");
+
+    redirect(`/turno/${token}`);
+  }
+
   if (plan.charge) {
     const checkout = await createDepositCheckout(
       {

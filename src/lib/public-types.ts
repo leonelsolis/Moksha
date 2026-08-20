@@ -22,6 +22,14 @@ export type PublicService = {
    * apagado llega en `null` y la URL ni siquiera viaja al navegador.
    */
   photoUrl: string | null;
+  /**
+   * Seña de este servicio, o `null` si no se seña.
+   *
+   * Viaja al navegador porque el paso de datos tiene que poder decir cuánto se
+   * cobra y ofrecer el medio de pago antes de confirmar. No es un dato
+   * sensible: es el mismo precio que ya está publicado en el catálogo.
+   */
+  depositAmount: number | null;
 };
 
 /** ¿Hay algo que mostrar en la ficha del servicio? */

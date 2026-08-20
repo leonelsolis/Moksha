@@ -156,6 +156,32 @@ export function formatTimestamp(seconds: number, timeZone: string) {
   }).format(new Date(seconds * 1000));
 }
 
+/**
+ * Un instante con su día, para plazos que cruzan la medianoche.
+ *
+ * `formatTimestamp` sirve para una retención de minutos, donde "hasta las
+ * 15:40" es inequívoco. La de una transferencia dura horas: decir "hasta las
+ * 15:40" cuando faltan veintitrés horas hace que la clienta crea que tiene una
+ * tarde y en realidad tiene un día entero. Acá va el día también.
+ */
+export function formatTimestampLong(seconds: number, timeZone: string) {
+  return new Intl.DateTimeFormat("es-AR", {
+    timeZone,
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+    .format(new Date(seconds * 1000))
+    // El formato de es-AR trae comas ("viernes, 21 de agosto, 11:24") que en
+    // una frase corrida sobran, y la hora pelada al final se lee mejor con su
+    // preposición.
+    .replace(/,/g, "")
+    .replace(/(\d{1,2}:\d{2})$/, "a las $1");
+}
+
 /** "09:30" → 570. Devuelve null si no es una hora válida. */
 export function parseMinute(value: string): number | null {
   const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());

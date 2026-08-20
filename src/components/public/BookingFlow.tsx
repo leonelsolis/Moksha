@@ -54,6 +54,14 @@ type Props = {
   cancelCutoffHours: number;
   /** Ficha de ubicación ya armada (o `null` si no hay dirección cargada). */
   location?: React.ReactNode;
+  /**
+   * Qué medios de seña están disponibles, ya resueltos en el servidor.
+   *
+   * Llegan como dos booleanos y no como configuración: el navegador no tiene
+   * por qué enterarse de si hay un token cargado ni a qué alias se transfiere.
+   * Eso último se muestra recién después de reservar, en la pantalla del turno.
+   */
+  payment?: { mercadopago: boolean; transfer: boolean };
 };
 
 export function BookingFlow({
@@ -61,6 +69,7 @@ export function BookingFlow({
   window,
   cancelCutoffHours,
   location = null,
+  payment = { mercadopago: false, transfer: false },
 }: Props) {
   const [professional, setProfessional] = useState<PublicProfessionalView | null>(
     null,
@@ -392,6 +401,8 @@ export function BookingFlow({
                   />
                 </div>
 
+                <DepositChoice service={service} payment={payment} />
+
                 <SubmitButton />
 
                 <p className="text-xs text-ink-muted">
@@ -433,6 +444,103 @@ export function BookingFlow({
         </aside>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Cómo se paga la seña.
+ *
+ * Aparece solo si este servicio se seña Y hay al menos un medio disponible. En
+ * un servicio sin seña —que es el caso de la mayoría— no se renderiza nada y
+ * el paso de datos se ve exactamente como se veía antes.
+ *
+ * Con un solo medio disponible no se pregunta nada: se informa cuánto y por
+ * dónde, y el medio viaja en un campo oculto. Una elección de una sola opción
+ * no es una elección, es un clic de más.
+ */
+function DepositChoice({
+  service,
+  payment,
+}: {
+  service: PublicService;
+  payment: { mercadopago: boolean; transfer: boolean };
+}) {
+  const deposit = service.depositAmount ?? 0;
+  if (deposit <= 0) return null;
+
+  const available = [
+    payment.mercadopago ? ("mercadopago" as const) : null,
+    payment.transfer ? ("transfer" as const) : null,
+  ].filter((method): method is "mercadopago" | "transfer" => method !== null);
+
+  if (available.length === 0) return null;
+
+  const amount = `$${deposit.toLocaleString("es-AR")}`;
+
+  if (available.length === 1) {
+    return (
+      <div className="rounded-sm border border-line bg-surface-sunken p-3">
+        <input type="hidden" name="paymentMethod" value={available[0]} />
+        <p className="text-sm font-medium">
+          Para reservar se abona una seña de {amount}
+        </p>
+        <p className="mt-1 text-xs text-ink-soft">
+          {available[0] === "mercadopago"
+            ? "Al confirmar te llevamos a Mercado Pago. El turno queda reservado apenas se acredita."
+            : "Al confirmar te mostramos los datos para transferir. El turno queda reservado cuando verificamos la transferencia."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <fieldset className="rounded-sm border border-line bg-surface-sunken p-3">
+      <legend className="px-1 text-sm font-medium">
+        ¿Cómo querés abonar la seña de {amount}?
+      </legend>
+
+      <div className="mt-2 space-y-2">
+        <PaymentOption
+          value="mercadopago"
+          label="Mercado Pago"
+          hint="Tarjeta, débito o efectivo. El turno queda confirmado al instante."
+          defaultChecked
+        />
+        <PaymentOption
+          value="transfer"
+          label="Transferencia bancaria"
+          hint="Te damos el alias en la pantalla siguiente. Lo verificamos y te confirmamos el turno."
+        />
+      </div>
+    </fieldset>
+  );
+}
+
+function PaymentOption({
+  value,
+  label,
+  hint,
+  defaultChecked = false,
+}: {
+  value: string;
+  label: string;
+  hint: string;
+  defaultChecked?: boolean;
+}) {
+  return (
+    <label className="flex cursor-pointer gap-2.5 rounded-sm border border-line bg-surface p-2.5 has-[:checked]:border-accent">
+      <input
+        type="radio"
+        name="paymentMethod"
+        value={value}
+        defaultChecked={defaultChecked}
+        className="mt-0.5 size-4 shrink-0 accent-accent"
+      />
+      <span className="min-w-0">
+        <span className="block text-sm font-medium">{label}</span>
+        <span className="mt-0.5 block text-xs text-ink-soft">{hint}</span>
+      </span>
+    </label>
   );
 }
 
