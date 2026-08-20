@@ -361,13 +361,28 @@ aparece en la respuesta, la verificación automática sirve y se puede encender
 en Señas y cobros. Si no aparece, dejala apagada: la aprobación con un clic
 desde el panel funciona siempre.
 
-Necesita `CRON_SECRET` en las variables de entorno. En Vercel el cron ya está
-declarado en `vercel.json`; en cualquier otro lado, un cron del sistema que
-haga:
+### Programar el chequeo
+
+Necesita `CRON_SECRET` en las variables de entorno, y algo que llame cada tanto
+a:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" https://tu-dominio/api/pagos/transferencias
 ```
+
+Cada diez o quince minutos alcanza de sobra: del otro lado hay alguien
+esperando que le confirmen un turno, no un pago en tiempo real.
+
+**Los cron de Vercel no sirven en el plan Hobby**, que es el que usa este
+proyecto: ahí solo se permite uno por día, y un chequeo diario llegaría después
+de que venza la retención. Las opciones son:
+
+- Un servicio de cron gratuito (cron-job.org, EasyCron) apuntando a esa URL con
+  el header.
+- Un workflow de GitHub Actions con `schedule`, guardando el secreto en los
+  Secrets del repositorio.
+- El plan Pro de Vercel, donde el cron se declara en `vercel.json` con la
+  frecuencia que se quiera.
 
 Con la verificación automática apagada este endpoint no hace nada, así que se
 puede dejar programado igual.

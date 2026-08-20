@@ -22,11 +22,15 @@ import { matchIncomingTransfers } from "@/lib/transfer";
  *
  * ── Configurarlo ────────────────────────────────────────────────────────
  *
- * En Vercel se declara en `vercel.json` (ya está) y hace falta CRON_SECRET en
- * las variables de entorno; Vercel lo manda solo en el header. En cualquier
- * otro lado, un cron del sistema que haga:
+ * Hace falta CRON_SECRET en las variables de entorno y algo que llame acá cada
+ * tanto con ese secreto en el header:
  *
  *   curl -H "Authorization: Bearer $CRON_SECRET" https://tu-dominio/api/pagos/transferencias
+ *
+ * Los cron de Vercel NO sirven en el plan Hobby: ahí se permite uno por día, y
+ * un chequeo diario llegaría después de que venza la retención. Sirve
+ * cualquier programador externo (cron-job.org, un workflow de GitHub Actions)
+ * o el plan Pro. Ver el README.
  *
  * Si `transfer_auto_verify` está apagado en Ajustes, esto no hace nada: sale
  * en la primera línea sin salir a la red. Se puede dejar programado igual.
