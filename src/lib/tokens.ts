@@ -38,6 +38,18 @@ export function tokensMatch(a: string, b: string) {
   return timingSafeEqual(bufA, bufB);
 }
 
+/**
+ * El identificador de una visita repartida entre profesionales.
+ *
+ * No es un token: no da acceso a nada y no viaja en ningún link. Es una marca
+ * interna que dice qué turnos se sacaron juntos, y lo único que se le pide es
+ * no repetirse. Se genera igual que los tokens por comodidad —el azar ya está
+ * acá— pero con la mitad de bytes, que para eso sobra.
+ */
+export function generateGroupId() {
+  return randomBytes(16).toString("base64url");
+}
+
 /** Descarta rápido cualquier cosa que no tenga forma de token. */
 export function looksLikeToken(value: string) {
   return /^[A-Za-z0-9_-]{20,64}$/.test(value);

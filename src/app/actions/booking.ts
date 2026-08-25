@@ -2,28 +2,36 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { and, eq, gte, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, ne } from "drizzle-orm";
 
 import { client, db } from "@/db";
 import { appointments, professionals, services } from "@/db/schema";
+import type { Professional, Service } from "@/db/schema";
 import type {
   BookingState,
   CancelState,
   LookupResult,
   LookupState,
 } from "@/lib/action-state";
-import { isSlotBookable, releaseExpiredHolds } from "@/lib/availability";
-import { combinedServiceName, readServiceIds } from "@/lib/booking-services";
+import { isChainBookable, releaseExpiredHolds } from "@/lib/availability";
+import { readLegsOrSingle } from "@/lib/booking-legs";
+import { combinedServiceName } from "@/lib/booking-services";
 import { formatDateLong, formatMinute, minutesUntil, nowInTz } from "@/lib/dates";
 import { sendCancellationConfirmation } from "@/lib/email";
 import {
   announceNewBooking,
   notifyProfessionalCancellation,
+  notifyProfessionalNewBooking,
 } from "@/lib/notify";
 import { createDepositCheckout, depositFor, paymentPlanFor } from "@/lib/payments";
 import { checkRateLimit, clientKey } from "@/lib/rate-limit";
 import { getSettings, settingBool, settingInt } from "@/lib/settings";
-import { generateCancelToken, hashToken, looksLikeToken } from "@/lib/tokens";
+import {
+  generateCancelToken,
+  generateGroupId,
+  hashToken,
+  looksLikeToken,
+} from "@/lib/tokens";
 import {
   assignTransferAmount,
   transferAvailableFor,
@@ -42,10 +50,21 @@ function fail(message: string, errors: FieldErrors = {}): BookingState {
 }
 
 /**
- * Confirma un turno.
+ * Confirma una reserva.
+ *
+ * Una reserva puede ser un turno o varios. La forma de siempre —una
+ * profesional, uno o varios servicios suyos— sigue guardando una sola fila. La
+ * nueva es la visita repartida: las manos con una profesional y las cejas con
+ * otra, uno detrás del otro en la misma salida. Ahí se guarda una fila por
+ * tramo, cada una en la agenda de su profesional, unidas por `booking_group`.
+ *
+ * Cada tramo es un turno de verdad y no un pedazo de otra cosa: ocupa su
+ * horario, avisa a su profesional y se cancela solo. Lo que hace el grupo es
+ * que la clienta tenga un único link que muestra la visita entera y que una
+ * sola seña alcance para confirmarla toda.
  *
  * El punto delicado es que dos personas pueden confirmar el mismo horario en
- * el mismo instante. Se resuelve en dos capas:
+ * el mismo instante. Se resuelve en dos capas, tramo por tramo:
  *
  *   1. La inserción es un único `INSERT … SELECT … WHERE NOT EXISTS`: la
  *      comprobación de choques y el alta viajan en la misma sentencia, y
@@ -61,21 +80,26 @@ function fail(message: string, errors: FieldErrors = {}): BookingState {
  *      error de código saltee lo anterior, la base rechaza un segundo turno
  *      con el mismo inicio exacto.
  *
- * El turno puede llevar más de un servicio —pies y manos en la misma
- * sentada—, y eso no cambia nada de lo de arriba: sigue siendo una sola fila.
- * Lo que se guarda es la suma, y la suma se arma acá con los servicios que
- * traiga la base, nunca con lo que diga el formulario: del navegador solo se
- * aceptan los ids.
+ * Si en esa carrera se pierde un tramo pero no el otro, lo que se salvó se
+ * guarda igual y se dice en pantalla cuál faltó. Es lo contrario de tirar
+ * abajo la visita entera: la clienta se queda con el turno que consiguió y
+ * saca el otro cuando quiera, en vez de perder los dos.
+ *
+ * Lo que se guarda en cada fila —nombre del servicio, duración, seña— se arma
+ * acá con lo que traiga la base, nunca con lo que diga el formulario: del
+ * navegador solo se aceptan los ids.
  *
  * De acá salen dos finales distintos, y cuál es lo decide `paymentPlanFor`:
  *
- *   · Sin cobro (Mercado Pago apagado, sin token, o servicio sin seña): el
- *     turno nace confirmado, se manda el mail y se va a la pantalla del turno.
- *     Es el camino de siempre y el que corre de fábrica.
+ *   · Sin cobro (Mercado Pago apagado, sin token, o servicios sin seña): los
+ *     turnos nacen confirmados, se manda el mail y se va a la pantalla del
+ *     turno. Es el camino de siempre y el que corre de fábrica.
  *
- *   · Con cobro: el turno nace como pre-reserva ('pending_payment'), retiene el
- *     horario un rato y la clienta se va al checkout de Mercado Pago. Recién
- *     con el pago aprobado pasa a confirmado.
+ *   · Con cobro: los turnos nacen como pre-reserva ('pending_payment'),
+ *     retienen el horario un rato y la clienta se va al checkout de Mercado
+ *     Pago. Recién con el pago aprobado pasan a confirmados. La seña es una
+ *     sola por visita —la suma de todos los tramos— y queda anotada en el
+ *     primero, que es el que se cobra; al acreditarse se confirman todos.
  *
  * Que el cobro esté mal configurado o que Mercado Pago no conteste no rompe
  * ninguna reserva: en cualquiera de esos casos se termina por el primer camino.
@@ -91,19 +115,16 @@ export async function createBooking(
     );
   }
 
-  const professionalId = Number(formData.get("professionalId"));
-  const serviceIds = readServiceIds(
-    String(formData.get("serviceIds") ?? formData.get("serviceId") ?? ""),
-  );
+  const legIds = readLegsOrSingle({
+    legs: String(formData.get("legs") ?? ""),
+    professionalId: String(formData.get("professionalId") ?? ""),
+    serviceIds: String(formData.get("serviceIds") ?? formData.get("serviceId") ?? ""),
+  });
+
   const date = String(formData.get("date") ?? "");
   const startMinute = Number(formData.get("startMinute"));
 
-  if (
-    !professionalId ||
-    serviceIds.length === 0 ||
-    !date ||
-    !Number.isFinite(startMinute)
-  ) {
+  if (legIds.length === 0 || !date || !Number.isFinite(startMinute)) {
     return fail("Faltan datos del turno. Volvé a elegir el horario.");
   }
 
@@ -114,54 +135,88 @@ export async function createBooking(
 
   const settings = await getSettings();
 
-  const [professional] = await db
+  /*
+   * Las profesionales y los servicios, en dos consultas para todos los tramos
+   * juntos. Se piden por separado y se cruzan acá abajo porque cada servicio
+   * tiene que ser de la profesional de SU tramo: sin esa comprobación, un
+   * formulario manipulado podría pedir un servicio de una en la agenda de otra.
+   */
+  const professionalRows = await db
     .select()
     .from(professionals)
     .where(
-      and(eq(professionals.id, professionalId), eq(professionals.active, true)),
-    )
-    .limit(1);
+      and(
+        inArray(professionals.id, legIds.map((leg) => leg.professionalId)),
+        eq(professionals.active, true),
+      ),
+    );
 
-  if (!professional) return fail("Esa profesional ya no está disponible.");
-
-  const rows = await db
+  const serviceRows = await db
     .select()
     .from(services)
     .where(
       and(
-        inArray(services.id, serviceIds),
-        eq(services.professionalId, professionalId),
+        inArray(services.id, legIds.flatMap((leg) => leg.serviceIds)),
         eq(services.active, true),
       ),
     );
 
-  // Se pide que estén todos: reservar con uno menos sería darle a la clienta
-  // un turno más corto que el que pidió, y enterarse recién al llegar.
-  if (rows.length !== serviceIds.length) {
-    return fail("Alguno de los servicios ya no está disponible. Volvé a elegir.");
+  /** Cada tramo ya resuelto: quién atiende, qué le toca y a qué hora empieza. */
+  const legs: {
+    professional: Professional;
+    serviceId: number;
+    serviceName: string;
+    duration: number;
+    deposit: number;
+    startMinute: number;
+  }[] = [];
+
+  let cursor = startMinute;
+  for (const leg of legIds) {
+    const professional = professionalRows.find(
+      (row) => row.id === leg.professionalId,
+    );
+    if (!professional) return fail("Esa profesional ya no está disponible.");
+
+    const chosen = leg.serviceIds.map((id) =>
+      serviceRows.find(
+        (row) => row.id === id && row.professionalId === professional.id,
+      ),
+    );
+
+    // Se piden todos: reservar con uno menos sería darle a la clienta un turno
+    // más corto que el que pidió, y enterarse recién al llegar.
+    if (chosen.some((row) => row === undefined)) {
+      return fail("Alguno de los servicios ya no está disponible. Volvé a elegir.");
+    }
+
+    const rows = chosen as Service[];
+
+    legs.push({
+      professional,
+      /*
+       * `serviceId` guarda el primero porque la columna es una sola y el
+       * nombre completo ya queda en `service_name`, que es lo que leen el
+       * panel, el mail y la pantalla del turno.
+       */
+      serviceId: rows[0].id,
+      serviceName: combinedServiceName(rows.map((row) => row.name)),
+      duration: rows.reduce((total, row) => total + row.durationMinutes, 0),
+      deposit: rows.reduce((total, row) => total + (row.depositAmount ?? 0), 0),
+      startMinute: cursor,
+    });
+
+    cursor += legs[legs.length - 1].duration;
   }
 
-  /*
-   * Lo elegido, en el orden en que se eligió y sumado.
-   *
-   * `serviceId` guarda el primero porque la columna es una sola y el nombre
-   * completo ya queda en `service_name`, que es lo que leen el panel, el mail
-   * y la pantalla del turno.
-   */
-  const chosen = serviceIds.map((id) => rows.find((row) => row.id === id)!);
-
-  const service = {
-    id: chosen[0].id,
-    name: combinedServiceName(chosen.map((row) => row.name)),
-    durationMinutes: chosen.reduce((total, row) => total + row.durationMinutes, 0),
-    depositAmount: chosen.reduce((total, row) => total + (row.depositAmount ?? 0), 0),
-  };
-
-  // Chequeo completo contra las reglas del negocio: horario laboral,
-  // vacaciones, excepciones, antelación mínima y turnos ya tomados.
-  const bookable = await isSlotBookable({
-    professional,
-    duration: service.durationMinutes,
+  // Chequeo completo contra las reglas del negocio —horario laboral,
+  // vacaciones, excepciones, antelación mínima y turnos ya tomados— y, con
+  // varios tramos, que entren todos uno detrás del otro.
+  const bookable = await isChainBookable({
+    legs: legs.map((leg) => ({
+      professional: leg.professional,
+      duration: leg.duration,
+    })),
     date,
     startMinute,
     settings,
@@ -173,19 +228,24 @@ export async function createBooking(
     );
   }
 
-  const endMinute = startMinute + service.durationMinutes;
-  const { token, hash } = generateCancelToken();
+  /*
+   * La seña es una sola por visita: la suma de la de cada servicio de cada
+   * tramo. Se cobra una vez y confirma todo, porque para la clienta esto es
+   * una sola salida y mandarla a pagar dos veces sería absurdo.
+   */
+  const totalDeposit = legs.reduce((total, leg) => total + leg.deposit, 0);
+  const totalName = combinedServiceName(legs.map((leg) => leg.serviceName));
 
   /*
-   * ¿Este turno se cobra?
+   * ¿Esta visita se cobra?
    *
    * `paymentPlanFor` mira las tres condiciones juntas —interruptor encendido,
-   * token cargado en el servidor y seña cargada en este servicio— y nunca
-   * lanza: ante cualquier duda contesta que no se cobra. Por eso no hace falta
+   * token cargado en el servidor y seña cargada en lo elegido— y nunca lanza:
+   * ante cualquier duda contesta que no se cobra. Por eso no hace falta
    * envolver nada en try/catch acá: con Mercado Pago apagado, mal configurado o
    * caído, la reserva sigue por el camino de siempre.
    */
-  const plan = await paymentPlanFor(service, settings);
+  const plan = await paymentPlanFor({ depositAmount: totalDeposit }, settings);
 
   const now = Math.floor(Date.now() / 1000);
 
@@ -205,8 +265,9 @@ export async function createBooking(
   const wantsTransfer = String(formData.get("paymentMethod") ?? "") === "transfer";
 
   const transferAmount =
-    wantsTransfer && (await transferAvailableFor(service, settings))
-      ? await assignTransferAmount(depositFor(service), now)
+    wantsTransfer &&
+    (await transferAvailableFor({ depositAmount: totalDeposit }, settings))
+      ? await assignTransferAmount(depositFor({ depositAmount: totalDeposit }), now)
       : null;
 
   const byTransfer = transferAmount !== null;
@@ -218,7 +279,7 @@ export async function createBooking(
       : null;
 
   const depositAmount = byTransfer
-    ? depositFor(service)
+    ? depositFor({ depositAmount: totalDeposit })
     : plan.charge
       ? plan.amount
       : null;
@@ -226,82 +287,118 @@ export async function createBooking(
   /** Retiene el horario todo lo que no se confirme en el acto. */
   const isPreBooking = byTransfer || plan.charge;
 
-  // Las pre-reservas vencidas de ese día se dan de baja antes de intentar el
-  // alta: el índice único cuenta a las 'pending_payment', así que una que quedó
-  // a medias bloquearía el horario aunque su retención ya no valga.
-  await releaseExpiredHolds(professionalId, date, now);
+  /** La marca que dice que estos tramos se sacaron juntos. Uno solo no la lleva. */
+  const bookingGroup = legs.length > 1 ? generateGroupId() : null;
 
-  /*
-   * La condición `NOT EXISTS` compara el rango pedido contra los turnos que
-   * retienen el horario —confirmados y pre-reservas todavía vigentes—: hay
-   * choque si el nuevo empieza antes de que termine el otro y termina después
-   * de que el otro empieza. Si algo se solapa, el SELECT no devuelve filas y el
-   * INSERT no inserta nada.
-   */
-  let appointmentId: number | null = null;
-  try {
-    const result = await client.execute({
-      sql: `INSERT INTO appointments
-              (professional_id, service_id, service_name, date, start_minute,
-               end_minute, status, first_name, last_name, dni, email, phone,
-               cancel_token_hash, deposit_amount, hold_expires_at,
-               payment_method, transfer_amount, created_at)
-            SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch()
-            WHERE NOT EXISTS (
-              SELECT 1 FROM appointments
-               WHERE professional_id = ? AND date = ?
-                 AND (status = 'booked'
-                      OR (status = 'pending_payment' AND hold_expires_at > ?))
-                 AND start_minute < ? AND end_minute > ?
-            )
-            RETURNING id`,
-      args: [
-        professionalId,
-        service.id,
-        service.name,
-        date,
-        startMinute,
-        endMinute,
-        isPreBooking ? "pending_payment" : "booked",
-        value.firstName,
-        value.lastName,
-        value.dni,
-        value.email,
-        value.phone,
-        hash,
-        depositAmount,
-        holdExpiresAt,
-        byTransfer ? "transfer" : plan.charge ? "mercadopago" : null,
-        transferAmount,
-        professionalId,
-        date,
-        now,
-        endMinute,
-        startMinute,
-      ],
-    });
+  const created: {
+    id: number;
+    token: string;
+    leg: (typeof legs)[number];
+  }[] = [];
+  const lost: (typeof legs)[number][] = [];
 
-    appointmentId = result.rows.length > 0 ? Number(result.rows[0].id) : null;
-  } catch {
-    // Salta si el índice único parcial rechazó la inserción.
-    appointmentId = null;
+  for (const leg of legs) {
+    // Las pre-reservas vencidas de ese día se dan de baja antes de intentar el
+    // alta: el índice único cuenta a las 'pending_payment', así que una que quedó
+    // a medias bloquearía el horario aunque su retención ya no valga.
+    await releaseExpiredHolds(leg.professional.id, date, now);
+
+    const { token, hash } = generateCancelToken();
+
+    /*
+     * La condición `NOT EXISTS` compara el rango pedido contra los turnos que
+     * retienen el horario —confirmados y pre-reservas todavía vigentes—: hay
+     * choque si el nuevo empieza antes de que termine el otro y termina después
+     * de que el otro empieza. Si algo se solapa, el SELECT no devuelve filas y el
+     * INSERT no inserta nada.
+     */
+    let appointmentId: number | null = null;
+    try {
+      const result = await client.execute({
+        sql: `INSERT INTO appointments
+                (professional_id, service_id, service_name, date, start_minute,
+                 end_minute, status, first_name, last_name, dni, email, phone,
+                 cancel_token_hash, hold_expires_at, booking_group, created_at)
+              SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch()
+              WHERE NOT EXISTS (
+                SELECT 1 FROM appointments
+                 WHERE professional_id = ? AND date = ?
+                   AND (status = 'booked'
+                        OR (status = 'pending_payment' AND hold_expires_at > ?))
+                   AND start_minute < ? AND end_minute > ?
+              )
+              RETURNING id`,
+        args: [
+          leg.professional.id,
+          leg.serviceId,
+          leg.serviceName,
+          date,
+          leg.startMinute,
+          leg.startMinute + leg.duration,
+          isPreBooking ? "pending_payment" : "booked",
+          value.firstName,
+          value.lastName,
+          value.dni,
+          value.email,
+          value.phone,
+          hash,
+          // La retención va en todos los tramos: mientras se paga, ninguno de
+          // los horarios de la visita puede aparecer libre.
+          holdExpiresAt,
+          bookingGroup,
+          leg.professional.id,
+          date,
+          now,
+          leg.startMinute + leg.duration,
+          leg.startMinute,
+        ],
+      });
+
+      appointmentId = result.rows.length > 0 ? Number(result.rows[0].id) : null;
+    } catch {
+      // Salta si el índice único parcial rechazó la inserción.
+      appointmentId = null;
+    }
+
+    if (appointmentId === null) {
+      lost.push(leg);
+      continue;
+    }
+
+    created.push({ id: appointmentId, token, leg });
   }
 
-  if (appointmentId === null) {
+  if (created.length === 0) {
     return fail(
       "Ese horario acaba de ser reservado por otra persona. Elegí otro, por favor.",
     );
   }
 
   /*
-   * Camino con cobro: se pide el link de pago y se manda a la clienta al
-   * checkout. El turno queda retenido hasta que el pago se apruebe.
+   * El turno que lleva la seña: el primero que se pudo guardar.
    *
-   * Si Mercado Pago no contesta o rechaza la preferencia, la pre-reserva se
-   * confirma igual y sigue por el camino de abajo, sin cobro. Es a propósito:
-   * una seña que no se cobró se arregla cobrando en el local, pero una reserva
-   * que no se pudo hacer es una clienta perdida. Queda el motivo en los logs.
+   * Los datos del cobro se anotan después del alta y no dentro, porque hasta
+   * acá no se sabe cuál de los tramos sobrevivió a la carrera por el horario.
+   * Es también el turno cuyo link se le da a la clienta, y desde el que se ve
+   * la visita entera.
    */
+  const head = created[0];
+  const token = head.token;
+
+  if (isPreBooking) {
+    await db
+      .update(appointments)
+      .set({
+        depositAmount,
+        paymentMethod: byTransfer ? "transfer" : "mercadopago",
+        transferAmount,
+      })
+      .where(eq(appointments.id, head.id));
+  }
+
+  /** Se perdió algún tramo en la carrera: la pantalla del turno lo avisa. */
+  const partial = lost.length > 0;
+
   /*
    * Camino de la transferencia: no hay a dónde mandarla, así que se va a la
    * pantalla de su turno, que es la que muestra el alias y el importe exacto.
@@ -315,15 +412,24 @@ export async function createBooking(
     revalidatePath("/");
     revalidatePath("/admin");
 
-    redirect(`/turno/${token}`);
+    redirect(`/turno/${token}${partial ? "?parcial=1" : ""}`);
   }
 
+  /*
+   * Camino con cobro: se pide el link de pago y se manda a la clienta al
+   * checkout. Los turnos quedan retenidos hasta que el pago se apruebe.
+   *
+   * Si Mercado Pago no contesta o rechaza la preferencia, las pre-reservas se
+   * confirman igual y siguen por el camino de abajo, sin cobro. Es a propósito:
+   * una seña que no se cobró se arregla cobrando en el local, pero una reserva
+   * que no se pudo hacer es una clienta perdida. Queda el motivo en los logs.
+   */
   if (plan.charge) {
     const checkout = await createDepositCheckout(
       {
-        id: appointmentId,
+        id: head.id,
         email: value.email,
-        serviceName: service.name,
+        serviceName: totalName,
         amount: plan.amount,
         token,
       },
@@ -337,7 +443,7 @@ export async function createBooking(
           mpPreferenceId: checkout.data.preferenceId,
           mpCheckoutUrl: checkout.data.url,
         })
-        .where(eq(appointments.id, appointmentId));
+        .where(eq(appointments.id, head.id));
 
       revalidatePath("/");
       revalidatePath("/admin");
@@ -357,35 +463,61 @@ export async function createBooking(
         depositAmount: null,
         holdExpiresAt: null,
       })
-      .where(eq(appointments.id, appointmentId));
+      .where(
+        inArray(
+          appointments.id,
+          created.map((item) => item.id),
+        ),
+      );
   }
 
-  // El mail a la clienta y el aviso a la profesional. Ninguno de los dos puede
-  // invalidar el turno: ya está guardado y la clienta ve el link en la pantalla
-  // siguiente. Lo que falle queda anotado en los logs del servidor, que es lo
-  // único que explica después un mail que no llegó.
+  /*
+   * El mail a la clienta y el aviso a cada profesional. Ninguno de los dos
+   * puede invalidar la reserva: ya está guardada y la clienta ve el link en la
+   * pantalla siguiente. Lo que falle queda anotado en los logs del servidor,
+   * que es lo único que explica después un mail que no llegó.
+   *
+   * A la clienta le llega UN mail por visita, con el link que muestra todos los
+   * tramos. A cada profesional, el aviso del tramo que le toca a ella: lo que
+   * necesita saber es su propia agenda.
+   */
   await announceNewBooking({
-    appointmentId,
+    appointmentId: head.id,
     appointment: {
-      professionalId,
+      professionalId: head.leg.professional.id,
       date,
-      startMinute,
-      endMinute,
-      serviceName: service.name,
+      startMinute: head.leg.startMinute,
+      endMinute: head.leg.startMinute + head.leg.duration,
+      serviceName: head.leg.serviceName,
       firstName: value.firstName,
       lastName: value.lastName,
       dni: value.dni,
       email: value.email,
       phone: value.phone,
     },
-    professionalName: professional.name,
+    professionalName: head.leg.professional.name,
     token,
   });
+
+  for (const item of created.slice(1)) {
+    await notifyProfessionalNewBooking({
+      professionalId: item.leg.professional.id,
+      date,
+      startMinute: item.leg.startMinute,
+      endMinute: item.leg.startMinute + item.leg.duration,
+      serviceName: item.leg.serviceName,
+      firstName: value.firstName,
+      lastName: value.lastName,
+      dni: value.dni,
+      email: value.email,
+      phone: value.phone,
+    });
+  }
 
   revalidatePath("/");
   revalidatePath("/admin");
 
-  redirect(`/turno/${token}?nuevo=1`);
+  redirect(`/turno/${token}?nuevo=1${partial ? "&parcial=1" : ""}`);
 }
 
 /**
@@ -409,13 +541,46 @@ export async function cancelBooking(
     return { ok: false, message: "Demasiados intentos. Probá en unos minutos." };
   }
 
-  const [appointment] = await db
+  const [owner] = await db
     .select()
     .from(appointments)
     .where(eq(appointments.cancelTokenHash, hashToken(token)))
     .limit(1);
 
-  if (!appointment) {
+  if (!owner) {
+    return { ok: false, message: "No encontramos ese turno." };
+  }
+
+  /*
+   * Qué tramo se cancela.
+   *
+   * Con una visita repartida entre profesionales, la clienta tiene un solo link
+   * —el del primer tramo— y desde ahí ve todos. Por eso el formulario puede
+   * pedir cancelar otro tramo por id.
+   *
+   * Ese id no da acceso a nada por sí solo: tiene que ser de la MISMA visita
+   * que el token, así que con un link ajeno no se llega a ningún lado. Es la
+   * misma regla de siempre —solo se toca lo propio— extendida al grupo.
+   */
+  const targetId = Number(formData.get("appointmentId") ?? "");
+
+  const appointment =
+    Number.isInteger(targetId) && targetId > 0 && targetId !== owner.id
+      ? (
+          await db
+            .select()
+            .from(appointments)
+            .where(eq(appointments.id, targetId))
+            .limit(1)
+        )[0]
+      : owner;
+
+  if (
+    !appointment ||
+    (appointment.id !== owner.id &&
+      (owner.bookingGroup === null ||
+        appointment.bookingGroup !== owner.bookingGroup))
+  ) {
     return { ok: false, message: "No encontramos ese turno." };
   }
 
@@ -472,6 +637,35 @@ export async function cancelBooking(
         inArray(appointments.status, ["booked", "pending_payment"]),
       ),
     );
+
+  /*
+   * Soltar una pre-reserva suelta la visita entera.
+   *
+   * Los tramos de una visita repartida retienen el horario con una sola seña,
+   * la del primero. Quien se arrepiente en el checkout no está soltando un
+   * tramo sino la visita: dejar el otro retenido hasta que venza el plazo sería
+   * bloquear una agenda por algo que ya nadie va a pagar.
+   *
+   * Con los turnos CONFIRMADOS no pasa esto: ahí cada tramo se cancela solo, que
+   * es lo que la clienta espera al elegir cancelar uno.
+   */
+  if (isPending && appointment.bookingGroup) {
+    await db
+      .update(appointments)
+      .set({
+        status: "cancelled_by_client",
+        cancelledAt: Math.floor(Date.now() / 1000),
+        holdExpiresAt: null,
+      })
+      .where(
+        and(
+          eq(appointments.bookingGroup, appointment.bookingGroup),
+          ne(appointments.id, appointment.id),
+          eq(appointments.status, "pending_payment"),
+        ),
+      )
+      .catch(() => undefined);
+  }
 
   // Los avisos son solo para los turnos que llegaron a confirmarse. De una
   // pre-reserva sin pagar nunca se anunció nada: mandar ahora la cancelación de

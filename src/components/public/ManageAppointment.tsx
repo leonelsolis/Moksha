@@ -23,6 +23,18 @@ type Props = {
   blockedReason: string | null;
   /** Hay una seña cobrada: se avisa que cancelar no la devuelve. */
   depositPaid?: boolean;
+  /**
+   * Qué turno se cancela, cuando no es el del link.
+   *
+   * Una visita repartida entre profesionales tiene un solo link —el del primer
+   * tramo— y desde él se ven y se cancelan todos. El servidor comprueba que el
+   * id sea de la misma visita que el token; ver `cancelBooking`.
+   */
+  appointmentId?: number;
+  /** El link para volver. Se muestra una sola vez por pantalla. */
+  showLink?: boolean;
+  /** Texto del botón, para distinguir de cuál de los tramos es. */
+  cancelLabel?: string;
 };
 
 export function ManageAppointment({
@@ -30,6 +42,9 @@ export function ManageAppointment({
   canCancel,
   blockedReason,
   depositPaid = false,
+  appointmentId,
+  showLink = true,
+  cancelLabel = "Cancelar turno",
 }: Props) {
   const [state, formAction] = useActionState(cancelBooking, emptyCancelState);
   const [confirming, setConfirming] = useState(false);
@@ -46,7 +61,7 @@ export function ManageAppointment({
     <div className="space-y-3">
       {state.message ? <Alert tone="error">{state.message}</Alert> : null}
 
-      <CopyLink token={token} />
+      {showLink ? <CopyLink token={token} /> : null}
 
       {canCancel ? (
         confirming ? (
@@ -65,6 +80,9 @@ export function ManageAppointment({
             <div className="mt-3 flex flex-wrap gap-2">
               <form action={formAction}>
                 <input type="hidden" name="token" value={token} />
+                {appointmentId ? (
+                  <input type="hidden" name="appointmentId" value={appointmentId} />
+                ) : null}
                 <ConfirmButton />
               </form>
 
@@ -83,7 +101,7 @@ export function ManageAppointment({
             className="btn btn-danger w-full sm:w-auto"
             onClick={() => setConfirming(true)}
           >
-            Cancelar turno
+            {cancelLabel}
           </button>
         )
       ) : blockedReason ? (

@@ -8,6 +8,7 @@ import { emptyBookingState } from "@/lib/action-state";
 import { Alert } from "@/components/Alert";
 import { Field } from "@/components/Field";
 import { Icon } from "@/components/Icon";
+import { MAX_LEGS, writeLegs } from "@/lib/booking-legs";
 import { formatDateLong, formatMinute } from "@/lib/dates";
 import {
   hasServiceInfo,
@@ -41,6 +42,24 @@ import { SlotPicker } from "./SlotPicker";
  * la seña también. El botón "Continuar" es el que cierra el paso, porque acá
  * ya no alcanza con tocar una card para saber que terminó de elegir.
  *
+ * ── Una visita, varias profesionales ──────────────────────────────────────
+ *
+ * Lo que se está armando no es un turno sino una VISITA, y una visita puede
+ * repartirse: las manos con una profesional y las cejas con otra, uno detrás
+ * del otro en la misma salida. Cada una de esas partes es un "tramo": una
+ * profesional con sus servicios.
+ *
+ * Casi siempre hay un solo tramo, y entonces esto se ve y se comporta igual
+ * que siempre. Al confirmar el suyo aparece la opción de sumar otra
+ * profesional, y recién ahí los pasos de profesional y servicio se reabren
+ * para el tramo nuevo. Lo que ya se eligió queda a la vista en el resumen de
+ * la visita, con su botón para quitarlo.
+ *
+ * De ahí en adelante el flujo sigue siendo uno solo: un día, una hora de
+ * inicio y un formulario. Los horarios que se ofrecen son los que dejan entrar
+ * todos los tramos seguidos, y de la hora de inicio sale la de cada uno
+ * sumando duraciones. Nadie está en dos sillas a la vez.
+ *
  * Al costado van las fichas de los servicios elegidos (qué son, y su foto si
  * está activada). No pueden vivir dentro del paso porque el paso se colapsa
  * apenas se confirma: son elementos aparte que acompañan al resto del flujo.
@@ -50,6 +69,15 @@ import { SlotPicker } from "./SlotPicker";
  * dirección vive en Ajustes y este componente es de cliente: así el mapa se
  * renderiza en el servidor y la configuración no viaja al navegador.
  */
+
+/** Una profesional con lo que le toca hacer en esta visita. */
+type Leg = {
+  professional: PublicProfessionalView;
+  /** Los servicios elegidos, en el orden en que se fueron tocando. */
+  services: PublicService[];
+  /** El paso del servicio ya se cerró para este tramo. */
+  confirmed: boolean;
+};
 
 type Props = {
   professionals: PublicProfessionalView[];
@@ -74,12 +102,11 @@ export function BookingFlow({
   location = null,
   payment = { mercadopago: false, transfer: false },
 }: Props) {
-  const [professional, setProfessional] = useState<PublicProfessionalView | null>(
-    null,
-  );
-  /** Los servicios elegidos, en el orden en que se fueron tocando. */
-  const [services, setServices] = useState<PublicService[]>([]);
-  const [serviceConfirmed, setServiceConfirmed] = useState(false);
+  /** Los tramos de la visita, en el orden en que se atienden. */
+  const [legs, setLegs] = useState<Leg[]>([]);
+  /** Se está eligiendo profesional: la primera, o una más. */
+  const [picking, setPicking] = useState(true);
+
   const [date, setDate] = useState<string | null>(null);
   const [startMinute, setStartMinute] = useState<number | null>(null);
 
@@ -95,30 +122,55 @@ export function BookingFlow({
 
   const [state, formAction] = useActionState(createBooking, emptyBookingState);
 
+  /** El tramo que se está armando: el último, mientras no se confirme. */
+  const draft = legs.length > 0 && !legs[legs.length - 1].confirmed
+    ? legs[legs.length - 1]
+    : null;
+
+  /** La visita está definida: todos los tramos cerrados y ninguno a medio armar. */
+  const ready = legs.length > 0 && draft === null && !picking;
+
   /*
-   * Lo que sale de la suma de los servicios elegidos.
+   * Lo que sale de sumar todos los tramos.
    *
-   * `serviceIds` es también lo que viaja al servidor —en la consulta de
+   * `legsParam` es también lo que viaja al servidor —en la consulta de
    * disponibilidad y en el formulario— y lo que identifica la elección para el
    * efecto de carga: comparar una cadena evita volver a pedir los horarios
-   * cuando el arreglo es otro objeto con los mismos servicios adentro.
+   * cuando el arreglo es otro objeto con lo mismo adentro.
    */
-  const serviceIds = services.map((service) => service.id).join(",");
-  const serviceNames = services.map((service) => service.name).join(" + ");
-  const totalDuration = services.reduce(
+  const legsParam = writeLegs(
+    legs
+      .filter((leg) => leg.confirmed)
+      .map((leg) => ({
+        professionalId: leg.professional.id,
+        serviceIds: leg.services.map((service) => service.id),
+      })),
+  );
+
+  const chosenServices = legs.flatMap((leg) => leg.services);
+
+  const totalDuration = chosenServices.reduce(
     (total, service) => total + service.durationMinutes,
     0,
   );
-  const totalDeposit = services.reduce(
+  const totalDeposit = chosenServices.reduce(
     (total, service) => total + (service.depositAmount ?? 0),
     0,
   );
 
+  /** Las que todavía no están en la visita: nadie se atiende dos veces con la misma. */
+  const availableProfessionals = professionals.filter(
+    (item) => !legs.some((leg) => leg.professional.id === item.id),
+  );
+
+  const canAddProfessional =
+    legs.length < MAX_LEGS && availableProfessionals.length > 0;
+
   const detailsRef = useRef<HTMLDivElement>(null);
 
-  /** Trae los horarios libres de toda la ventana para la selección actual. */
+  /** Trae los horarios libres de toda la ventana para la visita armada. */
   useEffect(() => {
-    if (!professional || services.length === 0) {
+    if (!ready || legsParam === "") {
       setAvailability({});
       return;
     }
@@ -128,8 +180,7 @@ export function BookingFlow({
     setLoadError(null);
 
     const params = new URLSearchParams({
-      professionalId: String(professional.id),
-      serviceIds: serviceIds,
+      legs: legsParam,
       from: window.today,
       to: window.lastDate,
     });
@@ -149,7 +200,7 @@ export function BookingFlow({
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [professional, serviceIds, reloadKey, window.today, window.lastDate]);
+  }, [ready, legsParam, reloadKey, window.today, window.lastDate]);
 
   /**
    * Si el servidor rechaza la reserva porque el horario se ocupó mientras se
@@ -166,29 +217,83 @@ export function BookingFlow({
     setReloadKey((current) => current + 1);
   }, [rejectedSlot, state]);
 
+  /** Cambiar lo que se va a hacer invalida el día y la hora ya elegidos. */
+  function resetSchedule() {
+    setDate(null);
+    setStartMinute(null);
+  }
+
   function selectProfessional(next: PublicProfessionalView) {
-    setProfessional(next);
     // Con un solo servicio no tiene sentido hacer elegir: se saltea el paso.
-    setServices(next.services.length === 1 ? [next.services[0]] : []);
-    setServiceConfirmed(next.services.length === 1);
-    setDate(null);
-    setStartMinute(null);
+    const single = next.services.length === 1 ? [next.services[0]] : [];
+
+    setLegs((current) => [
+      ...current,
+      { professional: next, services: single, confirmed: single.length === 1 },
+    ]);
+    setPicking(false);
+    resetSchedule();
   }
 
-  /** Agrega el servicio, o lo saca si ya estaba elegido. */
+  /** Agrega el servicio al tramo que se está armando, o lo saca si ya estaba. */
   function toggleService(next: PublicService) {
-    setServices((current) =>
-      current.some((service) => service.id === next.id)
-        ? current.filter((service) => service.id !== next.id)
-        : [...current, next],
+    setLegs((current) =>
+      current.map((leg, index) =>
+        index === current.length - 1
+          ? {
+              ...leg,
+              confirmed: false,
+              services: leg.services.some((service) => service.id === next.id)
+                ? leg.services.filter((service) => service.id !== next.id)
+                : [...leg.services, next],
+            }
+          : leg,
+      ),
     );
-    setServiceConfirmed(false);
-    setDate(null);
-    setStartMinute(null);
+    resetSchedule();
   }
 
-  function confirmService() {
-    setServiceConfirmed(true);
+  function confirmLeg() {
+    setLegs((current) =>
+      current.map((leg, index) =>
+        index === current.length - 1 ? { ...leg, confirmed: true } : leg,
+      ),
+    );
+  }
+
+  /** Saca un tramo de la visita. Los demás quedan como estaban. */
+  function removeLeg(professionalId: number) {
+    setLegs((current) => {
+      const next = current.filter(
+        (leg) => leg.professional.id !== professionalId,
+      );
+      if (next.length === 0) setPicking(true);
+      return next;
+    });
+    resetSchedule();
+  }
+
+  /** Vuelve al paso de la profesional para sumar otra a la visita. */
+  function addProfessional() {
+    setPicking(true);
+    resetSchedule();
+  }
+
+  /** Empieza de cero: se cambia con quién y, por lo tanto, todo lo demás. */
+  function resetVisit() {
+    setLegs([]);
+    setPicking(true);
+    resetSchedule();
+  }
+
+  /** Reabre el paso del servicio para corregir el último tramo. */
+  function editServices() {
+    setLegs((current) =>
+      current.map((leg, index) =>
+        index === current.length - 1 ? { ...leg, confirmed: false } : leg,
+      ),
+    );
+    resetSchedule();
   }
 
   function selectDate(next: string) {
@@ -206,16 +311,15 @@ export function BookingFlow({
 
   const availableDates = new Set(Object.keys(availability));
   const slotsForDate = date ? (availability[date] ?? []) : [];
-  const showServiceStep = (professional?.services.length ?? 0) > 1;
 
-  const steps = buildSteps({
-    professional,
-    services,
-    serviceConfirmed,
-    date,
-    startMinute,
-    showServiceStep,
-  });
+  /*
+   * Que el paso del servicio exista o no se decide con el catálogo entero y no
+   * con la profesional elegida: si dependiera de ella, los pasos se
+   * renumerarían al cambiar de una a otra y el flujo daría un salto.
+   */
+  const showServiceStep = professionals.some((item) => item.services.length > 1);
+
+  const steps = buildSteps({ legs, picking, draft, date, startMinute });
 
   /*
    * La ficha se arma una sola vez y se coloca en dos lugares excluyentes por
@@ -224,9 +328,9 @@ export function BookingFlow({
    * animación de entrada.
    */
   const info =
-    services.length > 0 ? (
+    chosenServices.length > 0 ? (
       <div className="space-y-3">
-        {services.map((service) => (
+        {chosenServices.map((service) => (
           <ServiceInfo key={service.id} service={service} />
         ))}
       </div>
@@ -245,45 +349,60 @@ export function BookingFlow({
         {/* ── Paso 1 · profesional ─────────────────────────────────────── */}
         <Step
           number={1}
-          title="Elegí con quién"
+          title={legs.length > 1 ? "Elegí con quiénes" : "Elegí con quién"}
           state={steps.professional}
-          summary={professional?.name}
-          onEdit={() => {
-            setProfessional(null);
-            setServices([]);
-            setServiceConfirmed(false);
-            setDate(null);
-            setStartMinute(null);
-          }}
+          summary={legs.map((leg) => leg.professional.name).join(" + ")}
+          onEdit={resetVisit}
         >
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {professionals.map((item) => (
-              <ProfessionalCard
-                key={item.id}
-                data={item}
-                selected={professional?.id === item.id}
-                onSelect={() => selectProfessional(item)}
-              />
-            ))}
+          <div className="space-y-3">
+            {legs.length > 0 ? (
+              <p className="text-sm text-ink-soft">
+                Sumá a quién te va a atender después de{" "}
+                {legs[legs.length - 1].professional.name}.
+              </p>
+            ) : null}
+
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {availableProfessionals.map((item) => (
+                <ProfessionalCard
+                  key={item.id}
+                  data={item}
+                  selected={false}
+                  onSelect={() => selectProfessional(item)}
+                />
+              ))}
+            </div>
+
+            {/* Arrepentirse de sumar otra no puede costar volver a empezar. */}
+            {legs.length > 0 ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setPicking(false)}
+              >
+                Mejor no, seguir así
+              </button>
+            ) : null}
           </div>
         </Step>
 
-        {/* ── Paso 2 · servicio (solo si hay más de uno) ───────────────── */}
+        {/* ── Paso 2 · servicio (solo si hay algo que elegir) ──────────── */}
         {showServiceStep ? (
           <Step
             number={2}
             title="Elegí el servicio"
             state={steps.service}
             summary={
-              services.length > 0
-                ? `${serviceNames} · ${totalDuration} min`
+              chosenServices.length > 0
+                ? `${legs
+                    .map((leg) =>
+                      leg.services.map((service) => service.name).join(" + "),
+                    )
+                    .filter(Boolean)
+                    .join(" + ")} · ${totalDuration} min`
                 : undefined
             }
-            onEdit={() => {
-              setServiceConfirmed(false);
-              setDate(null);
-              setStartMinute(null);
-            }}
+            onEdit={editServices}
           >
             <div className="space-y-4">
               {/*
@@ -291,32 +410,58 @@ export function BookingFlow({
                 profesional: las categorías son del negocio, pero la rama en la
                 que estaba parada la clienta era la de la anterior.
               */}
-              {professional ? (
-                <ServicePicker
-                  key={professional.id}
-                  catalog={professional.catalog}
-                  selected={services}
-                  onToggle={toggleService}
-                />
-              ) : null}
+              {draft ? (
+                <>
+                  {legs.length > 1 ? (
+                    <p className="text-sm text-ink-soft">
+                      Qué te hacés con {draft.professional.name}.
+                    </p>
+                  ) : null}
 
-              {/* Con varios servicios elegidos el resumen del botón es lo que
-                  confirma que se juntó lo que se quería juntar, antes de
-                  cerrar el paso. */}
-              {services.length > 0 && !serviceConfirmed ? (
-                <button
-                  type="button"
-                  onClick={confirmService}
-                  className="btn btn-primary w-full"
-                >
-                  Continuar
-                  {services.length > 1
-                    ? ` con ${services.length} servicios · ${totalDuration} min`
-                    : ""}
-                </button>
-              ) : null}
+                  <ServicePicker
+                    key={draft.professional.id}
+                    catalog={draft.professional.catalog}
+                    selected={draft.services}
+                    onToggle={toggleService}
+                  />
+
+                  {/* Con varios servicios elegidos el resumen del botón es lo
+                      que confirma que se juntó lo que se quería juntar, antes
+                      de cerrar el paso. */}
+                  {draft.services.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={confirmLeg}
+                      className="btn btn-primary w-full"
+                    >
+                      Continuar
+                      {draft.services.length > 1
+                        ? ` con ${draft.services.length} servicios · ${draft.services.reduce(
+                            (total, service) => total + service.durationMinutes,
+                            0,
+                          )} min`
+                        : ""}
+                    </button>
+                  ) : null}
+                </>
+              ) : (
+                <p className="text-sm text-ink-muted">
+                  Elegí primero con quién te querés atender.
+                </p>
+              )}
             </div>
           </Step>
+        ) : null}
+
+        {/* Resumen de la visita y la opción de sumar otra profesional. */}
+        {ready ? (
+          <Visit
+            legs={legs}
+            totalDuration={totalDuration}
+            canAdd={canAddProfessional}
+            onAdd={addProfessional}
+            onRemove={removeLeg}
+          />
         ) : null}
 
         {/* Ficha del servicio en pantallas angostas: justo debajo de donde se
@@ -342,8 +487,9 @@ export function BookingFlow({
             </p>
           ) : availableDates.size === 0 ? (
             <Alert tone="info" title="No hay turnos disponibles">
-              No quedan horarios libres en los próximos días. Escribinos y vemos
-              cómo darte una mano.
+              {legs.length > 1
+                ? "No encontramos ningún día en el que las dos te puedan atender una después de la otra. Probá con una sola profesional, o escribinos y lo acomodamos."
+                : "No quedan horarios libres en los próximos días. Escribinos y vemos cómo darte una mano."}
             </Alert>
           ) : (
             <Calendar
@@ -380,19 +526,13 @@ export function BookingFlow({
             title="Confirmá tus datos"
             state={steps.details}
           >
-            {professional && services.length > 0 && date && startMinute != null ? (
+            {ready && date && startMinute != null ? (
               <form action={formAction} className="space-y-4" noValidate>
-                <input type="hidden" name="professionalId" value={professional.id} />
-                <input type="hidden" name="serviceIds" value={serviceIds} />
+                <input type="hidden" name="legs" value={legsParam} />
                 <input type="hidden" name="date" value={date} />
                 <input type="hidden" name="startMinute" value={startMinute} />
 
-                <Summary
-                  professional={professional}
-                  services={services}
-                  date={date}
-                  startMinute={startMinute}
-                />
+                <Summary legs={legs} date={date} startMinute={startMinute} />
 
                 {state.message ? (
                   <Alert tone="error">{state.message}</Alert>
@@ -453,10 +593,11 @@ export function BookingFlow({
 
                 <DepositChoice deposit={totalDeposit} payment={payment} />
 
-                <SubmitButton />
+                <SubmitButton legs={legs.length} />
 
                 <p className="text-xs text-ink-muted">
-                  Al confirmar te damos un link para ver o cancelar tu turno.
+                  Al confirmar te damos un link para ver
+                  {legs.length > 1 ? " o cancelar tus turnos." : " o cancelar tu turno."}
                   {cancelCutoffHours > 0
                     ? ` Podés cancelarlo hasta ${cancelCutoffHours} ${
                         cancelCutoffHours === 1 ? "hora" : "horas"
@@ -498,14 +639,117 @@ export function BookingFlow({
 }
 
 /**
+ * La visita armada, entre el paso del servicio y el del día.
+ *
+ * Cumple dos funciones y por eso está acá y no adentro de un paso: recuerda
+ * qué se juntó cuando los pasos ya se colapsaron, y es el único lugar desde
+ * donde se suma otra profesional.
+ *
+ * Con un solo tramo se ve apenas la invitación a sumar a alguien más, que es
+ * lo que hace descubrible la función sin meterse en el medio de nadie. Si el
+ * local tiene una sola profesional —o ya están todas en la visita— no se
+ * muestra nada.
+ */
+function Visit({
+  legs,
+  totalDuration,
+  canAdd,
+  onAdd,
+  onRemove,
+}: {
+  legs: Leg[];
+  totalDuration: number;
+  canAdd: boolean;
+  onAdd: () => void;
+  onRemove: (professionalId: number) => void;
+}) {
+  const shared = legs.length > 1;
+
+  if (!shared && !canAdd) return null;
+
+  return (
+    <section className="panel p-4">
+      {shared ? (
+        <>
+          <h2 className="text-sm font-medium">Tu visita</h2>
+          <ol className="mt-2 space-y-2">
+            {legs.map((leg, index) => (
+              <li
+                key={leg.professional.id}
+                className="flex items-start gap-3 text-sm"
+              >
+                <span
+                  className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border border-line-strong text-[11px] tabular text-ink-muted"
+                  aria-hidden="true"
+                >
+                  {index + 1}
+                </span>
+
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">
+                    {leg.services.map((service) => service.name).join(" + ")}
+                  </span>
+                  <span className="block text-ink-soft">
+                    con {leg.professional.name}
+                    <span className="text-ink-muted">
+                      {" · "}
+                      {leg.services.reduce(
+                        (total, service) => total + service.durationMinutes,
+                        0,
+                      )}{" "}
+                      min
+                    </span>
+                  </span>
+                </span>
+
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm shrink-0"
+                  onClick={() => onRemove(leg.professional.id)}
+                >
+                  Quitar
+                </button>
+              </li>
+            ))}
+          </ol>
+
+          <p className="mt-3 border-t border-line pt-3 text-sm">
+            <span className="text-ink-muted">Total · </span>
+            <span className="font-medium tabular">{totalDuration} min</span>
+            <span className="text-ink-soft"> seguidos, el mismo día</span>
+          </p>
+        </>
+      ) : null}
+
+      {canAdd ? (
+        <div className={shared ? "mt-3" : ""}>
+          {!shared ? (
+            <p className="mb-2 text-sm text-ink-soft">
+              ¿Te vas a hacer algo más con otra profesional? Sumala y te damos
+              los turnos seguidos, uno detrás del otro.
+            </p>
+          ) : null}
+
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onAdd}>
+            <Icon name="user" className="size-3.5" />
+            Agregar otra profesional
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/**
  * Cómo se paga la seña.
  *
  * Aparece solo si lo elegido se seña Y hay al menos un medio disponible. En un
  * servicio sin seña —que es el caso de la mayoría— no se renderiza nada y el
  * paso de datos se ve exactamente como se veía antes.
  *
- * Con varios servicios la seña es la suma de las de cada uno, que es la misma
- * cuenta que hace el servidor al confirmar. Acá llega ya sumada.
+ * Con varios servicios la seña es la suma de las de cada uno, y con varias
+ * profesionales, la de todos los tramos: es una visita y se paga una vez. Es
+ * la misma cuenta que hace el servidor al confirmar. Acá llega ya sumada.
  *
  * Con un solo medio disponible no se pregunta nada: se informa cuánto y por
  * dónde, y el medio viaja en un campo oculto. Una elección de una sola opción
@@ -596,31 +840,50 @@ function PaymentOption({
   );
 }
 
-function SubmitButton() {
+function SubmitButton({ legs }: { legs: number }) {
   const { pending } = useFormStatus();
 
   return (
     <button type="submit" className="btn btn-primary w-full sm:w-auto" disabled={pending}>
-      {pending ? "Confirmando…" : "Confirmar turno"}
+      {pending
+        ? "Confirmando…"
+        : legs > 1
+          ? "Confirmar los turnos"
+          : "Confirmar turno"}
     </button>
   );
 }
 
 function Summary({
-  professional,
-  services,
+  legs,
   date,
   startMinute,
 }: {
-  professional: PublicProfessionalView;
-  services: PublicService[];
+  legs: Leg[];
   date: string;
   startMinute: number;
 }) {
-  const totalDuration = services.reduce(
-    (total, service) => total + service.durationMinutes,
-    0,
-  );
+  const shared = legs.length > 1;
+
+  /*
+   * La hora de cada tramo sale de la de inicio sumando lo que dura lo
+   * anterior: es la misma cuenta que hace el servidor al guardar. Se muestra
+   * porque con dos profesionales lo que la clienta necesita saber es a qué
+   * hora la atiende cada una, no cuánto dura el conjunto.
+   */
+  let cursor = startMinute;
+  const rows = legs.map((leg) => {
+    const duration = leg.services.reduce(
+      (total, service) => total + service.durationMinutes,
+      0,
+    );
+    const row = { leg, start: cursor, duration };
+    cursor += duration;
+    return row;
+  });
+
+  const totalDuration = cursor - startMinute;
+
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 rounded-sm border border-line bg-surface-sunken p-3 text-sm">
       <dt className="text-ink-muted">Cuándo</dt>
@@ -628,29 +891,55 @@ function Summary({
         {capitalize(formatDateLong(date, true))}, {formatMinute(startMinute)} h
       </dd>
 
-      <dt className="text-ink-muted">Con</dt>
-      <dd>{professional.name}</dd>
+      {shared ? (
+        <>
+          <dt className="text-ink-muted">La visita</dt>
+          <dd className="space-y-1.5">
+            {rows.map(({ leg, start, duration }) => (
+              <span key={leg.professional.id} className="block">
+                <span className="font-medium tabular">
+                  {formatMinute(start)} a {formatMinute(start + duration)}
+                </span>
+                <span className="text-ink-muted"> · </span>
+                {leg.services.map((service) => service.name).join(" + ")}
+                <span className="block text-ink-soft">
+                  con {leg.professional.name}
+                </span>
+              </span>
+            ))}
 
-      <dt className="text-ink-muted">
-        {services.length === 1 ? "Servicio" : "Servicios"}
-      </dt>
-      <dd>
-        {/* Uno por línea: dos servicios largos en una sola línea se cortan
-            justo donde hay que leerlos. El total va aparte, que es el dato
-            que dice cuánto va a durar el turno. */}
-        {services.map((service) => (
-          <span key={service.id} className="block">
-            {service.name}
-            <span className="text-ink-muted"> · {service.durationMinutes} min</span>
-          </span>
-        ))}
+            <span className="mt-0.5 block font-medium tabular">
+              Total · {totalDuration} min
+            </span>
+          </dd>
+        </>
+      ) : (
+        <>
+          <dt className="text-ink-muted">Con</dt>
+          <dd>{legs[0].professional.name}</dd>
 
-        {services.length > 1 ? (
-          <span className="mt-0.5 block font-medium tabular">
-            Total · {totalDuration} min
-          </span>
-        ) : null}
-      </dd>
+          <dt className="text-ink-muted">
+            {legs[0].services.length === 1 ? "Servicio" : "Servicios"}
+          </dt>
+          <dd>
+            {/* Uno por línea: dos servicios largos en una sola línea se cortan
+                justo donde hay que leerlos. El total va aparte, que es el dato
+                que dice cuánto va a durar el turno. */}
+            {legs[0].services.map((service) => (
+              <span key={service.id} className="block">
+                {service.name}
+                <span className="text-ink-muted"> · {service.durationMinutes} min</span>
+              </span>
+            ))}
+
+            {legs[0].services.length > 1 ? (
+              <span className="mt-0.5 block font-medium tabular">
+                Total · {totalDuration} min
+              </span>
+            ) : null}
+          </dd>
+        </>
+      )}
     </dl>
   );
 }
@@ -722,16 +1011,19 @@ function Step({
 /**
  * Estado de cada paso. El activo es el primero sin completar, así el flujo
  * avanza solo a medida que se elige, sin botones de "siguiente".
+ *
+ * Sumar otra profesional reabre los dos primeros pasos —hay que elegir quién y
+ * qué otra vez— y por eso el día y la hora vuelven a quedar pendientes: los
+ * horarios que sirven ya no son los mismos.
  */
 function buildSteps(selection: {
-  professional: PublicProfessionalView | null;
-  services: PublicService[];
-  serviceConfirmed: boolean;
+  legs: Leg[];
+  picking: boolean;
+  draft: Leg | null;
   date: string | null;
   startMinute: number | null;
-  showServiceStep: boolean;
 }): Record<"professional" | "service" | "date" | "time" | "details", StepState> {
-  const { professional, services, serviceConfirmed, date, startMinute } = selection;
+  const { legs, picking, draft, date, startMinute } = selection;
 
   const order: ("professional" | "service" | "date" | "time" | "details")[] = [
     "professional",
@@ -742,8 +1034,8 @@ function buildSteps(selection: {
   ];
 
   const complete: Record<string, boolean> = {
-    professional: professional !== null,
-    service: services.length > 0 && serviceConfirmed,
+    professional: legs.length > 0 && !picking,
+    service: legs.length > 0 && !picking && draft === null,
     date: date !== null,
     time: startMinute !== null,
     details: false,
