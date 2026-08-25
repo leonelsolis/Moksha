@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { asc, eq, gte, and } from "drizzle-orm";
+import { asc, eq, gte, lte, and } from "drizzle-orm";
 
 import {
   addOverride,
@@ -14,21 +14,30 @@ import {
 import { Alert } from "@/components/Alert";
 import { Icon } from "@/components/Icon";
 import { ActionForm, SubmitButton } from "@/components/admin/ActionForm";
+import { MonthSchedule, type DayCell } from "@/components/admin/MonthSchedule";
 import { db } from "@/db";
 import {
+  appointments,
   professionals,
   scheduleOverrides,
   vacations,
   workingHours,
 } from "@/db/schema";
+import { occupiesSlot } from "@/lib/availability";
 import { requireUser, scopeOf } from "@/lib/auth";
 import {
   WEEKDAY_NAMES,
   WEEKDAY_ORDER,
+  daysInMonth,
   formatDateLong,
   formatMinute,
+  formatMonthYear,
   isWithin,
+  monthGrid,
   nowInTz,
+  parseDate,
+  toDateString,
+  weekdayOf,
 } from "@/lib/dates";
 import { getSettings } from "@/lib/settings";
 
@@ -57,7 +66,7 @@ export const metadata = { title: "Horarios" };
 export default async function SchedulePage({
   searchParams,
 }: {
-  searchParams: Promise<{ prof?: string }>;
+  searchParams: Promise<{ prof?: string; mes?: string }>;
 }) {
   const account = await requireUser();
   const scope = scopeOf(account);
@@ -143,6 +152,135 @@ export default async function SchedulePage({
     isWithin(today, row.startDate, row.endDate),
   );
 
+  /* ── Mes visible en la grilla de carga mensual ─────────────────────
+   * Solo el mes en curso y el siguiente: es el horizonte con el que se
+   * trabaja cuando el horario lo pasan armado a comienzo de mes. Para algo
+   * más lejano está la carga por fecha puntual de abajo.
+   */
+  const todayParts = parseDate(today);
+  const nextMonth =
+    todayParts.month === 12
+      ? { year: todayParts.year + 1, month: 1 }
+      : { year: todayParts.year, month: todayParts.month + 1 };
+
+  const monthOptions = [
+    { year: todayParts.year, month: todayParts.month },
+    nextMonth,
+  ];
+
+  const monthKey = (m: { year: number; month: number }) =>
+    `${m.year}-${String(m.month).padStart(2, "0")}`;
+
+  const requested = String(params.mes ?? "");
+  const month =
+    monthOptions.find((m) => monthKey(m) === requested) ?? monthOptions[0];
+
+  const monthStart = toDateString({ ...month, day: 1 });
+  const monthEnd = toDateString({
+    ...month,
+    day: daysInMonth(month.year, month.month),
+  });
+
+  const [monthOverrides, monthVacations, monthAppointments] = await Promise.all([
+    db
+      .select()
+      .from(scheduleOverrides)
+      .where(
+        and(
+          eq(scheduleOverrides.professionalId, selected.id),
+          gte(scheduleOverrides.date, monthStart),
+          lte(scheduleOverrides.date, monthEnd),
+        ),
+      )
+      .orderBy(asc(scheduleOverrides.startMinute)),
+    db
+      .select()
+      .from(vacations)
+      .where(
+        and(
+          eq(vacations.professionalId, selected.id),
+          lte(vacations.startDate, monthEnd),
+          gte(vacations.endDate, monthStart),
+        ),
+      ),
+    // Solo los que retienen el horario: un turno cancelado no es motivo para
+    // pensarlo dos veces antes de cambiar el día.
+    db
+      .select({ date: appointments.date })
+      .from(appointments)
+      .where(
+        and(
+          eq(appointments.professionalId, selected.id),
+          gte(appointments.date, monthStart),
+          lte(appointments.date, monthEnd),
+          occupiesSlot(),
+        ),
+      ),
+  ]);
+
+  const overridesByDate = new Map<string, typeof monthOverrides>();
+  for (const row of monthOverrides) {
+    const list = overridesByDate.get(row.date) ?? [];
+    list.push(row);
+    overridesByDate.set(row.date, list);
+  }
+
+  const bookedByDate = new Map<string, number>();
+  for (const row of monthAppointments) {
+    bookedByDate.set(row.date, (bookedByDate.get(row.date) ?? 0) + 1);
+  }
+
+  const rangeLabel = (rows: { startMinute: number | null; endMinute: number | null }[]) =>
+    rows
+      .map(
+        (row) =>
+          `${formatMinute(row.startMinute ?? 0)}–${formatMinute(row.endMinute ?? 0)}`,
+      )
+      .join(", ");
+
+  const monthRows: (DayCell | null)[][] = monthGrid(month.year, month.month).map(
+    (week) =>
+      week.map((date) => {
+        if (!date) return null;
+
+        const dayOverrides = overridesByDate.get(date) ?? [];
+        const weekly = byWeekday.get(weekdayOf(date)) ?? [];
+
+        const onVacation =
+          selected.onVacation ||
+          monthVacations.some((row) =>
+            isWithin(date, row.startDate, row.endDate),
+          );
+
+        // La excepción manda; si no hay, rige el horario semanal.
+        const closedByOverride = dayOverrides.some(
+          (row) => row.kind === "closed",
+        );
+        const customRanges = dayOverrides.filter((row) => row.kind === "custom");
+
+        const source: DayCell["source"] =
+          dayOverrides.length > 0 ? "override" : weekly.length > 0 ? "weekly" : "none";
+
+        const closed =
+          closedByOverride ||
+          (dayOverrides.length === 0 && weekly.length === 0);
+
+        return {
+          date,
+          past: date < today,
+          source,
+          closed,
+          label: closed
+            ? ""
+            : customRanges.length > 0
+              ? rangeLabel(customRanges)
+              : rangeLabel(weekly),
+          onVacation,
+          appointments: bookedByDate.get(date) ?? 0,
+        } satisfies DayCell;
+      }),
+  );
+
   return (
     <div className="space-y-5">
       <div>
@@ -153,6 +291,11 @@ export default async function SchedulePage({
           {scope === null
             ? "Definí en qué días y a qué horas atiende cada profesional, y cuándo se toma vacaciones."
             : "Definí en qué días y a qué horas atendés, y cuándo te tomás vacaciones."}
+        </p>
+        <p className="mt-1.5 text-sm text-ink-soft">
+          Hay tres formas de cargarlo, de lo general a lo puntual: el horario de
+          todas las semanas, el de un mes en concreto —para horarios rotativos—
+          y las excepciones de un solo día. Cada una pisa a la anterior.
         </p>
       </div>
 
@@ -176,138 +319,6 @@ export default async function SchedulePage({
           ))}
         </div>
       ) : null}
-
-      {/* ── Vacaciones ───────────────────────────────────────────────── */}
-      <section className="panel overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <div className="min-w-0">
-            <h2 className="text-sm font-medium">Vacaciones</h2>
-            <p className="mt-0.5 text-xs text-ink-soft">
-              Los días bloqueados desaparecen de la web pública.
-            </p>
-          </div>
-
-          {/* Interruptor inmediato, para cuando no se sabe hasta cuándo. */}
-          <ActionForm action={toggleVacation} feedback="none">
-            <input type="hidden" name="id" value={selected.id} />
-            <input
-              type="hidden"
-              name="onVacation"
-              value={selected.onVacation ? "false" : "true"}
-            />
-            <SubmitButton className="btn btn-secondary btn-sm" pendingLabel="…">
-              <Icon name="vacation" className="size-3.5" />
-              {selected.onVacation
-                ? "Volvió de vacaciones"
-                : "Marcar de vacaciones ahora"}
-            </SubmitButton>
-          </ActionForm>
-        </div>
-
-        {selected.onVacation ? (
-          <p className="border-b border-line bg-warning-soft px-4 py-2 text-xs text-warning">
-            Marcada de vacaciones sin fecha de vuelta. No se le pueden sacar
-            turnos hasta que se desmarque.
-          </p>
-        ) : currentVacation ? (
-          <p className="border-b border-line bg-warning-soft px-4 py-2 text-xs text-warning">
-            De vacaciones hasta el {formatDateLong(currentVacation.endDate, true)}{" "}
-            inclusive.
-          </p>
-        ) : null}
-
-        {vacationRows.length > 0 ? (
-          <ul className="divide-y divide-line border-b border-line">
-            {vacationRows.map((row) => (
-              <li
-                key={row.id}
-                className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5"
-              >
-                <span className="text-sm">
-                  <span className="first-letter:uppercase">
-                    {formatDateLong(row.startDate)}
-                  </span>
-                  <span className="text-ink-muted"> al </span>
-                  <span>{formatDateLong(row.endDate, true)}</span>
-
-                  {row.note ? (
-                    <span className="ml-2 text-xs text-ink-muted">{row.note}</span>
-                  ) : null}
-
-                  {isWithin(today, row.startDate, row.endDate) ? (
-                    <span className="badge ml-2 border-warning-line bg-warning-soft text-warning">
-                      En curso
-                    </span>
-                  ) : null}
-                </span>
-
-                <ActionForm action={deleteVacation} feedback="none">
-                  <input type="hidden" name="id" value={row.id} />
-                  <SubmitButton className="btn btn-ghost btn-sm" pendingLabel="…">
-                    <Icon name="trash" className="size-3.5" />
-                    <span className="sr-only">Eliminar período</span>
-                  </SubmitButton>
-                </ActionForm>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-
-        <ActionForm action={addVacation} className="p-4" resetOnSuccess>
-          <input type="hidden" name="professionalId" value={selected.id} />
-
-          <div className="flex flex-wrap items-end gap-2">
-            <div>
-              <label className="field-label" htmlFor="vac-start">
-                Desde
-              </label>
-              <input
-                id="vac-start"
-                name="startDate"
-                type="date"
-                className="input"
-                required
-              />
-            </div>
-
-            <div>
-              <label className="field-label" htmlFor="vac-end">
-                Hasta (inclusive)
-              </label>
-              <input
-                id="vac-end"
-                name="endDate"
-                type="date"
-                className="input"
-                required
-              />
-            </div>
-
-            <div className="min-w-40 flex-1">
-              <label className="field-label" htmlFor="vac-note">
-                Nota
-              </label>
-              <input
-                id="vac-note"
-                name="note"
-                className="input"
-                placeholder="Opcional"
-                maxLength={80}
-              />
-            </div>
-
-            <SubmitButton className="btn btn-secondary">
-              <Icon name="plus" className="size-3.5" />
-              Agregar
-            </SubmitButton>
-          </div>
-
-          <p className="mt-2 text-xs text-ink-muted">
-            Los turnos ya reservados en esas fechas no se cancelan solos:
-            revisalos en la agenda y avisales a las clientas.
-          </p>
-        </ActionForm>
-      </section>
 
       {/* ── Horario semanal ──────────────────────────────────────────── */}
       <section className="panel overflow-hidden">
@@ -464,12 +475,57 @@ export default async function SchedulePage({
         </section>
       ) : null}
 
+      {/* ── Horario del mes ──────────────────────────────────────────── */}
+      <section className="panel overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-medium">Horario de un mes en concreto</h2>
+            <p className="mt-0.5 text-xs text-ink-soft">
+              Para cuando el horario rota y lo pasan armado mes a mes. Pisa al
+              horario de todas las semanas solo en los días que cargues.
+            </p>
+          </div>
+
+          {/* Este mes y el que viene: el horizonte con el que se trabaja. */}
+          <div className="flex flex-wrap gap-1.5">
+            {monthOptions.map((option) => {
+              const key = monthKey(option);
+              const isCurrent = key === monthKey(month);
+
+              return (
+                <Link
+                  key={key}
+                  href={`/admin/horarios?prof=${selected.id}&mes=${key}`}
+                  aria-current={isCurrent ? "page" : undefined}
+                  className={`rounded-sm border px-3 py-1.5 text-sm capitalize transition-colors ${
+                    isCurrent
+                      ? "border-accent bg-accent text-white"
+                      : "border-line-strong bg-surface text-ink-soft hover:bg-surface-sunken"
+                  }`}
+                >
+                  {formatMonthYear(option.year, option.month)}
+                </Link>
+              );
+            })}
+          </div>
+        </div>
+
+        <MonthSchedule
+          key={`${selected.id}-${monthKey(month)}`}
+          professionalId={selected.id}
+          monthLabel={formatMonthYear(month.year, month.month)}
+          rows={monthRows}
+          today={today}
+        />
+      </section>
+
       {/* ── Excepciones por fecha ────────────────────────────────────── */}
       <section className="panel overflow-hidden">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-medium">Excepciones para un día puntual</h2>
           <p className="mt-0.5 text-xs text-ink-soft">
-            Para feriados o días con horario distinto. Solo afectan a esa fecha.
+            Para feriados o un día suelto con horario distinto. Si tenés que
+            cargar el mes entero, es más rápido desde la grilla de arriba.
           </p>
         </div>
 
@@ -580,6 +636,137 @@ export default async function SchedulePage({
             ))}
           </ul>
         )}
+      </section>
+      {/* ── Vacaciones ───────────────────────────────────────────────── */}
+      <section className="panel overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-medium">Vacaciones</h2>
+            <p className="mt-0.5 text-xs text-ink-soft">
+              Los días bloqueados desaparecen de la web pública.
+            </p>
+          </div>
+
+          {/* Interruptor inmediato, para cuando no se sabe hasta cuándo. */}
+          <ActionForm action={toggleVacation} feedback="none">
+            <input type="hidden" name="id" value={selected.id} />
+            <input
+              type="hidden"
+              name="onVacation"
+              value={selected.onVacation ? "false" : "true"}
+            />
+            <SubmitButton className="btn btn-secondary btn-sm" pendingLabel="…">
+              <Icon name="vacation" className="size-3.5" />
+              {selected.onVacation
+                ? "Volvió de vacaciones"
+                : "Marcar de vacaciones ahora"}
+            </SubmitButton>
+          </ActionForm>
+        </div>
+
+        {selected.onVacation ? (
+          <p className="border-b border-line bg-warning-soft px-4 py-2 text-xs text-warning">
+            Marcada de vacaciones sin fecha de vuelta. No se le pueden sacar
+            turnos hasta que se desmarque.
+          </p>
+        ) : currentVacation ? (
+          <p className="border-b border-line bg-warning-soft px-4 py-2 text-xs text-warning">
+            De vacaciones hasta el {formatDateLong(currentVacation.endDate, true)}{" "}
+            inclusive.
+          </p>
+        ) : null}
+
+        {vacationRows.length > 0 ? (
+          <ul className="divide-y divide-line border-b border-line">
+            {vacationRows.map((row) => (
+              <li
+                key={row.id}
+                className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5"
+              >
+                <span className="text-sm">
+                  <span className="first-letter:uppercase">
+                    {formatDateLong(row.startDate)}
+                  </span>
+                  <span className="text-ink-muted"> al </span>
+                  <span>{formatDateLong(row.endDate, true)}</span>
+
+                  {row.note ? (
+                    <span className="ml-2 text-xs text-ink-muted">{row.note}</span>
+                  ) : null}
+
+                  {isWithin(today, row.startDate, row.endDate) ? (
+                    <span className="badge ml-2 border-warning-line bg-warning-soft text-warning">
+                      En curso
+                    </span>
+                  ) : null}
+                </span>
+
+                <ActionForm action={deleteVacation} feedback="none">
+                  <input type="hidden" name="id" value={row.id} />
+                  <SubmitButton className="btn btn-ghost btn-sm" pendingLabel="…">
+                    <Icon name="trash" className="size-3.5" />
+                    <span className="sr-only">Eliminar período</span>
+                  </SubmitButton>
+                </ActionForm>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <ActionForm action={addVacation} className="p-4" resetOnSuccess>
+          <input type="hidden" name="professionalId" value={selected.id} />
+
+          <div className="flex flex-wrap items-end gap-2">
+            <div>
+              <label className="field-label" htmlFor="vac-start">
+                Desde
+              </label>
+              <input
+                id="vac-start"
+                name="startDate"
+                type="date"
+                className="input"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="field-label" htmlFor="vac-end">
+                Hasta (inclusive)
+              </label>
+              <input
+                id="vac-end"
+                name="endDate"
+                type="date"
+                className="input"
+                required
+              />
+            </div>
+
+            <div className="min-w-40 flex-1">
+              <label className="field-label" htmlFor="vac-note">
+                Nota
+              </label>
+              <input
+                id="vac-note"
+                name="note"
+                className="input"
+                placeholder="Opcional"
+                maxLength={80}
+              />
+            </div>
+
+            <SubmitButton className="btn btn-secondary">
+              <Icon name="plus" className="size-3.5" />
+              Agregar
+            </SubmitButton>
+          </div>
+
+          <p className="mt-2 text-xs text-ink-muted">
+            Los turnos ya reservados en esas fechas no se cancelan solos:
+            revisalos en la agenda y avisales a las clientas.
+          </p>
+        </ActionForm>
       </section>
     </div>
   );

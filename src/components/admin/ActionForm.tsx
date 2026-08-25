@@ -53,19 +53,39 @@ export function ActionForm({
   );
 }
 
+/**
+ * `name` y `value` son para los formularios con más de un botón, donde lo que
+ * distingue una acción de otra es cuál se apretó (guardar el horario, marcar
+ * que no atiende, borrarlo). El navegador manda el par solo del botón usado.
+ */
 export function SubmitButton({
   children,
   className = "btn btn-primary",
   pendingLabel = "Guardando…",
+  name,
+  value,
+  disabled = false,
+  title,
 }: {
   children: React.ReactNode;
   className?: string;
   pendingLabel?: string;
+  name?: string;
+  value?: string;
+  disabled?: boolean;
+  title?: string;
 }) {
   const { pending } = useFormStatus();
 
   return (
-    <button type="submit" className={className} disabled={pending}>
+    <button
+      type="submit"
+      className={className}
+      disabled={pending || disabled}
+      name={name}
+      value={value}
+      title={title}
+    >
       {pending ? pendingLabel : children}
     </button>
   );
