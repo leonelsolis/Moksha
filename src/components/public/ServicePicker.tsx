@@ -24,6 +24,12 @@ import {
  * a cualquier nivel anterior de un toque. En el celular es lo mismo que hace
  * cualquier tienda, así que no hay nada que aprender.
  *
+ * Se puede elegir más de un servicio: cada card prende y apaga, y la clienta
+ * que se hace pies y manos se lleva los dos en el mismo turno. Los elegidos
+ * quedan marcados aunque estén en ramas distintas, y las cards por las que se
+ * entró cuentan cuántos hay adentro, así al volver al primer nivel se ve qué
+ * se juntó sin volver a abrir nada.
+ *
  * Un local que no creó ninguna categoría cae en el caso de siempre: la raíz no
  * tiene cards, todos los servicios están sueltos ahí y esto es la misma lista
  * plana que había antes.
@@ -31,15 +37,19 @@ import {
 
 type Props = {
   catalog: CatalogNode;
-  selected: PublicService | null;
-  onSelect: (service: PublicService) => void;
+  /** Los servicios ya elegidos, en el orden en que se fueron tocando. */
+  selected: PublicService[];
+  /** Agrega el servicio si no estaba, lo saca si ya estaba. */
+  onToggle: (service: PublicService) => void;
 };
 
-export function ServicePicker({ catalog, selected, onSelect }: Props) {
+export function ServicePicker({ catalog, selected, onToggle }: Props) {
   /** Categorías abiertas, de la primera a la actual. Vacío = primer nivel. */
   const [path, setPath] = useState<PublicCategory[]>([]);
 
   const node: CatalogNode = path.length > 0 ? path[path.length - 1] : catalog;
+
+  const selectedIds = new Set(selected.map((service) => service.id));
 
   /** Sube hasta cierto nivel. 0 = volver al principio. */
   const goTo = (depth: number) => setPath((current) => current.slice(0, depth));
@@ -86,7 +96,7 @@ export function ServicePicker({ catalog, selected, onSelect }: Props) {
           <CategoryCard
             key={category.id}
             category={category}
-            containsSelected={selected !== null && contains(category, selected.id)}
+            selectedInside={countSelected(category, selectedIds)}
             onOpen={() => setPath((current) => [...current, category])}
           />
         ))}
@@ -95,8 +105,8 @@ export function ServicePicker({ catalog, selected, onSelect }: Props) {
           <ServiceCard
             key={service.id}
             service={service}
-            selected={selected?.id === service.id}
-            onSelect={() => onSelect(service)}
+            selected={selectedIds.has(service.id)}
+            onToggle={() => onToggle(service)}
           />
         ))}
       </div>
@@ -132,27 +142,31 @@ function Crumb({
   );
 }
 
-/** ¿El servicio elegido está en esta rama? */
-function contains(category: PublicCategory, serviceId: number): boolean {
+/** Cuántos de los servicios elegidos cuelgan de esta rama. */
+function countSelected(category: PublicCategory, selectedIds: Set<number>): number {
   return (
-    category.services.some((service) => service.id === serviceId) ||
-    category.categories.some((child) => contains(child, serviceId))
+    category.services.filter((service) => selectedIds.has(service.id)).length +
+    category.categories.reduce(
+      (total, child) => total + countSelected(child, selectedIds),
+      0,
+    )
   );
 }
 
 /**
  * Una card que se abre.
  *
- * Se marca cuando el servicio elegido está adentro: al volver de un nivel, es
- * lo que dice por dónde se había entrado sin tener que abrir de nuevo.
+ * Se marca cuando adentro hay algo elegido, y dice cuántas cosas: al volver de
+ * un nivel, es lo que cuenta qué se llevó de esta rama sin tener que abrirla
+ * de nuevo.
  */
 function CategoryCard({
   category,
-  containsSelected,
+  selectedInside,
   onOpen,
 }: {
   category: PublicCategory;
-  containsSelected: boolean;
+  selectedInside: number;
   onOpen: () => void;
 }) {
   const total = countServices(category);
@@ -162,7 +176,7 @@ function CategoryCard({
       type="button"
       onClick={onOpen}
       className={`flex items-start justify-between gap-3 rounded-sm border p-3 text-left transition-colors ${
-        containsSelected
+        selectedInside > 0
           ? "border-accent bg-accent-soft"
           : "border-line-strong bg-surface hover:bg-surface-sunken"
       }`}
@@ -178,6 +192,7 @@ function CategoryCard({
 
         <span className="mt-1 block text-xs text-ink-muted tabular">
           {total} {total === 1 ? "opción" : "opciones"}
+          {selectedInside > 0 ? ` · ${selectedInside} elegido${selectedInside === 1 ? "" : "s"}` : ""}
         </span>
       </span>
 
@@ -189,16 +204,16 @@ function CategoryCard({
 function ServiceCard({
   service,
   selected,
-  onSelect,
+  onToggle,
 }: {
   service: PublicService;
   selected: boolean;
-  onSelect: () => void;
+  onToggle: () => void;
 }) {
   return (
     <button
       type="button"
-      onClick={onSelect}
+      onClick={onToggle}
       aria-pressed={selected}
       className={`flex items-start justify-between gap-3 rounded-sm border p-3 text-left transition-colors ${
         selected

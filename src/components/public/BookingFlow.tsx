@@ -35,12 +35,15 @@ import { SlotPicker } from "./SlotPicker";
  * elegir el servicio, así moverse entre días y meses es instantáneo.
  *
  * El paso del servicio no es una lista sino el catálogo del negocio, que se
- * recorre en cards por categoría (ver `ServicePicker`). Acá adentro sigue
- * siendo un paso más: se elige uno y el flujo avanza igual que antes.
+ * recorre en cards por categoría (ver `ServicePicker`). Se puede elegir más de
+ * uno —pies y manos en el mismo turno— y a partir de ahí todo el flujo trabaja
+ * con la suma: la duración que se busca en la agenda es la de todos juntos, y
+ * la seña también. El botón "Continuar" es el que cierra el paso, porque acá
+ * ya no alcanza con tocar una card para saber que terminó de elegir.
  *
- * Al costado va la ficha del servicio elegido (qué es, y su foto si está
- * activada). No puede vivir dentro del paso porque el paso se colapsa apenas se
- * elige: la ficha es un elemento aparte que acompaña al resto del flujo.
+ * Al costado van las fichas de los servicios elegidos (qué son, y su foto si
+ * está activada). No pueden vivir dentro del paso porque el paso se colapsa
+ * apenas se confirma: son elementos aparte que acompañan al resto del flujo.
  *
  * Debajo de esa ficha va el mapa del local, que llega armado desde el servidor
  * en `location`. Se recibe como prop en lugar de construirlo acá porque la
@@ -74,7 +77,8 @@ export function BookingFlow({
   const [professional, setProfessional] = useState<PublicProfessionalView | null>(
     null,
   );
-  const [service, setService] = useState<PublicService | null>(null);
+  /** Los servicios elegidos, en el orden en que se fueron tocando. */
+  const [services, setServices] = useState<PublicService[]>([]);
   const [serviceConfirmed, setServiceConfirmed] = useState(false);
   const [date, setDate] = useState<string | null>(null);
   const [startMinute, setStartMinute] = useState<number | null>(null);
@@ -83,13 +87,38 @@ export function BookingFlow({
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  /**
+   * Cambia para volver a pedir la disponibilidad sin tocar la elección: es lo
+   * que se usa cuando el servidor rechaza el horario por ocupado.
+   */
+  const [reloadKey, setReloadKey] = useState(0);
+
   const [state, formAction] = useActionState(createBooking, emptyBookingState);
+
+  /*
+   * Lo que sale de la suma de los servicios elegidos.
+   *
+   * `serviceIds` es también lo que viaja al servidor —en la consulta de
+   * disponibilidad y en el formulario— y lo que identifica la elección para el
+   * efecto de carga: comparar una cadena evita volver a pedir los horarios
+   * cuando el arreglo es otro objeto con los mismos servicios adentro.
+   */
+  const serviceIds = services.map((service) => service.id).join(",");
+  const serviceNames = services.map((service) => service.name).join(" + ");
+  const totalDuration = services.reduce(
+    (total, service) => total + service.durationMinutes,
+    0,
+  );
+  const totalDeposit = services.reduce(
+    (total, service) => total + (service.depositAmount ?? 0),
+    0,
+  );
 
   const detailsRef = useRef<HTMLDivElement>(null);
 
   /** Trae los horarios libres de toda la ventana para la selección actual. */
   useEffect(() => {
-    if (!professional || !service) {
+    if (!professional || services.length === 0) {
       setAvailability({});
       return;
     }
@@ -100,7 +129,7 @@ export function BookingFlow({
 
     const params = new URLSearchParams({
       professionalId: String(professional.id),
-      serviceId: String(service.id),
+      serviceIds: serviceIds,
       from: window.today,
       to: window.lastDate,
     });
@@ -120,7 +149,7 @@ export function BookingFlow({
       .finally(() => setLoading(false));
 
     return () => controller.abort();
-  }, [professional, service, window.today, window.lastDate]);
+  }, [professional, serviceIds, reloadKey, window.today, window.lastDate]);
 
   /**
    * Si el servidor rechaza la reserva porque el horario se ocupó mientras se
@@ -134,21 +163,25 @@ export function BookingFlow({
     if (!rejectedSlot) return;
     setStartMinute(null);
     setAvailability({});
-    // Vuelve a montar el efecto de carga cambiando la referencia del servicio.
-    setService((current) => (current ? { ...current } : current));
+    setReloadKey((current) => current + 1);
   }, [rejectedSlot, state]);
 
   function selectProfessional(next: PublicProfessionalView) {
     setProfessional(next);
     // Con un solo servicio no tiene sentido hacer elegir: se saltea el paso.
-    setService(next.services.length === 1 ? next.services[0] : null);
+    setServices(next.services.length === 1 ? [next.services[0]] : []);
     setServiceConfirmed(next.services.length === 1);
     setDate(null);
     setStartMinute(null);
   }
 
-  function selectService(next: PublicService) {
-    setService(next);
+  /** Agrega el servicio, o lo saca si ya estaba elegido. */
+  function toggleService(next: PublicService) {
+    setServices((current) =>
+      current.some((service) => service.id === next.id)
+        ? current.filter((service) => service.id !== next.id)
+        : [...current, next],
+    );
     setServiceConfirmed(false);
     setDate(null);
     setStartMinute(null);
@@ -177,7 +210,7 @@ export function BookingFlow({
 
   const steps = buildSteps({
     professional,
-    service,
+    services,
     serviceConfirmed,
     date,
     startMinute,
@@ -190,7 +223,14 @@ export function BookingFlow({
    * El `key` la remonta al cambiar de servicio, que es lo que repite la
    * animación de entrada.
    */
-  const info = service ? <ServiceInfo key={service.id} service={service} /> : null;
+  const info =
+    services.length > 0 ? (
+      <div className="space-y-3">
+        {services.map((service) => (
+          <ServiceInfo key={service.id} service={service} />
+        ))}
+      </div>
+    ) : null;
 
   // La columna del costado solo se reserva si hay algo que pueda ir ahí: el
   // mapa, o alguna explicación de servicio cargada. Sin nada de eso, la página
@@ -210,7 +250,8 @@ export function BookingFlow({
           summary={professional?.name}
           onEdit={() => {
             setProfessional(null);
-            setService(null);
+            setServices([]);
+            setServiceConfirmed(false);
             setDate(null);
             setStartMinute(null);
           }}
@@ -233,9 +274,12 @@ export function BookingFlow({
             number={2}
             title="Elegí el servicio"
             state={steps.service}
-            summary={service ? `${service.name} · ${service.durationMinutes} min` : undefined}
+            summary={
+              services.length > 0
+                ? `${serviceNames} · ${totalDuration} min`
+                : undefined
+            }
             onEdit={() => {
-              setService(null);
               setServiceConfirmed(false);
               setDate(null);
               setStartMinute(null);
@@ -251,18 +295,24 @@ export function BookingFlow({
                 <ServicePicker
                   key={professional.id}
                   catalog={professional.catalog}
-                  selected={service}
-                  onSelect={selectService}
+                  selected={services}
+                  onToggle={toggleService}
                 />
               ) : null}
 
-              {service && !serviceConfirmed ? (
+              {/* Con varios servicios elegidos el resumen del botón es lo que
+                  confirma que se juntó lo que se quería juntar, antes de
+                  cerrar el paso. */}
+              {services.length > 0 && !serviceConfirmed ? (
                 <button
                   type="button"
                   onClick={confirmService}
                   className="btn btn-primary w-full"
                 >
                   Continuar
+                  {services.length > 1
+                    ? ` con ${services.length} servicios · ${totalDuration} min`
+                    : ""}
                 </button>
               ) : null}
             </div>
@@ -317,7 +367,7 @@ export function BookingFlow({
         >
           <SlotPicker
             slots={slotsForDate}
-            duration={service?.durationMinutes ?? 0}
+            duration={totalDuration}
             selected={startMinute}
             onSelect={selectSlot}
           />
@@ -330,16 +380,16 @@ export function BookingFlow({
             title="Confirmá tus datos"
             state={steps.details}
           >
-            {professional && service && date && startMinute != null ? (
+            {professional && services.length > 0 && date && startMinute != null ? (
               <form action={formAction} className="space-y-4" noValidate>
                 <input type="hidden" name="professionalId" value={professional.id} />
-                <input type="hidden" name="serviceId" value={service.id} />
+                <input type="hidden" name="serviceIds" value={serviceIds} />
                 <input type="hidden" name="date" value={date} />
                 <input type="hidden" name="startMinute" value={startMinute} />
 
                 <Summary
                   professional={professional}
-                  service={service}
+                  services={services}
                   date={date}
                   startMinute={startMinute}
                 />
@@ -401,7 +451,7 @@ export function BookingFlow({
                   />
                 </div>
 
-                <DepositChoice service={service} payment={payment} />
+                <DepositChoice deposit={totalDeposit} payment={payment} />
 
                 <SubmitButton />
 
@@ -450,22 +500,24 @@ export function BookingFlow({
 /**
  * Cómo se paga la seña.
  *
- * Aparece solo si este servicio se seña Y hay al menos un medio disponible. En
- * un servicio sin seña —que es el caso de la mayoría— no se renderiza nada y
- * el paso de datos se ve exactamente como se veía antes.
+ * Aparece solo si lo elegido se seña Y hay al menos un medio disponible. En un
+ * servicio sin seña —que es el caso de la mayoría— no se renderiza nada y el
+ * paso de datos se ve exactamente como se veía antes.
+ *
+ * Con varios servicios la seña es la suma de las de cada uno, que es la misma
+ * cuenta que hace el servidor al confirmar. Acá llega ya sumada.
  *
  * Con un solo medio disponible no se pregunta nada: se informa cuánto y por
  * dónde, y el medio viaja en un campo oculto. Una elección de una sola opción
  * no es una elección, es un clic de más.
  */
 function DepositChoice({
-  service,
+  deposit,
   payment,
 }: {
-  service: PublicService;
+  deposit: number;
   payment: { mercadopago: boolean; transfer: boolean };
 }) {
-  const deposit = service.depositAmount ?? 0;
   if (deposit <= 0) return null;
 
   const available = [
@@ -556,15 +608,19 @@ function SubmitButton() {
 
 function Summary({
   professional,
-  service,
+  services,
   date,
   startMinute,
 }: {
   professional: PublicProfessionalView;
-  service: PublicService;
+  services: PublicService[];
   date: string;
   startMinute: number;
 }) {
+  const totalDuration = services.reduce(
+    (total, service) => total + service.durationMinutes,
+    0,
+  );
   return (
     <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 rounded-sm border border-line bg-surface-sunken p-3 text-sm">
       <dt className="text-ink-muted">Cuándo</dt>
@@ -575,10 +631,25 @@ function Summary({
       <dt className="text-ink-muted">Con</dt>
       <dd>{professional.name}</dd>
 
-      <dt className="text-ink-muted">Servicio</dt>
+      <dt className="text-ink-muted">
+        {services.length === 1 ? "Servicio" : "Servicios"}
+      </dt>
       <dd>
-        {service.name}
-        <span className="text-ink-muted"> · {service.durationMinutes} min</span>
+        {/* Uno por línea: dos servicios largos en una sola línea se cortan
+            justo donde hay que leerlos. El total va aparte, que es el dato
+            que dice cuánto va a durar el turno. */}
+        {services.map((service) => (
+          <span key={service.id} className="block">
+            {service.name}
+            <span className="text-ink-muted"> · {service.durationMinutes} min</span>
+          </span>
+        ))}
+
+        {services.length > 1 ? (
+          <span className="mt-0.5 block font-medium tabular">
+            Total · {totalDuration} min
+          </span>
+        ) : null}
       </dd>
     </dl>
   );
@@ -654,13 +725,13 @@ function Step({
  */
 function buildSteps(selection: {
   professional: PublicProfessionalView | null;
-  service: PublicService | null;
+  services: PublicService[];
   serviceConfirmed: boolean;
   date: string | null;
   startMinute: number | null;
   showServiceStep: boolean;
 }): Record<"professional" | "service" | "date" | "time" | "details", StepState> {
-  const { professional, service, serviceConfirmed, date, startMinute } = selection;
+  const { professional, services, serviceConfirmed, date, startMinute } = selection;
 
   const order: ("professional" | "service" | "date" | "time" | "details")[] = [
     "professional",
@@ -672,7 +743,7 @@ function buildSteps(selection: {
 
   const complete: Record<string, boolean> = {
     professional: professional !== null,
-    service: service !== null && serviceConfirmed,
+    service: services.length > 0 && serviceConfirmed,
     date: date !== null,
     time: startMinute !== null,
     details: false,

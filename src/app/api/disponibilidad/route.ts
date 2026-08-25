@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
 import { db } from "@/db";
 import { professionals, services } from "@/db/schema";
+import { readServiceIds } from "@/lib/booking-services";
 import { bookingWindow, getRangeAvailability } from "@/lib/availability";
 import { isValidDateString, nowInTz } from "@/lib/dates";
 import { getSettings } from "@/lib/settings";
@@ -12,6 +13,10 @@ import { getSettings } from "@/lib/settings";
  *
  * La pantalla de reserva pide un mes entero de una vez y se queda con la
  * respuesta, así navegar entre días no dispara una consulta por día.
+ *
+ * El turno puede juntar varios servicios (pies y manos), así que el parámetro
+ * es una lista de ids y lo que se busca en la agenda es un hueco del largo de
+ * todos juntos.
  *
  * Devuelve únicamente los horarios reservables. Los ocupados no se envían al
  * navegador: no hace falta que el cliente sepa cuándo está tomada la agenda,
@@ -24,11 +29,11 @@ export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
 
   const professionalId = Number(params.get("professionalId"));
-  const serviceId = Number(params.get("serviceId"));
+  const serviceIds = readServiceIds(params.get("serviceIds") ?? params.get("serviceId"));
   const from = params.get("from") ?? "";
   const to = params.get("to") ?? "";
 
-  if (!professionalId || !serviceId) {
+  if (!professionalId || serviceIds.length === 0) {
     return NextResponse.json({ error: "Faltan parámetros." }, { status: 400 });
   }
 
@@ -61,25 +66,28 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Profesional no encontrada." }, { status: 404 });
   }
 
-  const [service] = await db
+  const rows = await db
     .select()
     .from(services)
     .where(
       and(
-        eq(services.id, serviceId),
+        inArray(services.id, serviceIds),
         eq(services.professionalId, professionalId),
         eq(services.active, true),
       ),
-    )
-    .limit(1);
+    );
 
-  if (!service) {
+  // Alcanza con que falte uno para que la duración pedida sea otra: no se
+  // contesta con los horarios de una elección distinta a la que se hizo.
+  if (rows.length !== serviceIds.length) {
     return NextResponse.json({ error: "Servicio no encontrado." }, { status: 404 });
   }
 
+  const duration = rows.reduce((total, row) => total + row.durationMinutes, 0);
+
   const availability = await getRangeAvailability({
     professional,
-    duration: service.durationMinutes,
+    duration,
     fromDate,
     toDate,
     settings,
@@ -93,7 +101,7 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json(
-    { days, window, duration: service.durationMinutes },
+    { days, window, duration },
     { headers: { "Cache-Control": "no-store" } },
   );
 }
