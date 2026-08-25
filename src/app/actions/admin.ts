@@ -33,7 +33,6 @@ import {
 import { sendTestEmail } from "@/lib/email";
 import { checkMercadoPagoToken, mercadoPagoToken } from "@/lib/mercadopago";
 import { notifyProfessionalCancellation } from "@/lib/notify";
-import { formatMoney } from "@/lib/payments";
 import { updateSettings, type SettingKey, type Settings } from "@/lib/settings";
 import { generateToken } from "@/lib/tokens";
 import { enqueueMessages } from "@/lib/whatsapp";
@@ -573,6 +572,23 @@ export async function saveService(
   const sortOrder = Number(formData.get("sortOrder")) || 0;
 
   /*
+   * La parte de la ficha que se muestra en la web. Viaja en el mismo
+   * formulario que el resto desde que los servicios dejaron de estar partidos
+   * entre dos pantallas: es un solo servicio y se guarda de una.
+   *
+   * En el alta estos campos no se dibujan y llegan vacíos, que es exactamente
+   * lo que corresponde para un servicio recién creado: sin explicación y sin
+   * foto que mostrar.
+   */
+  const description = String(formData.get("description") ?? "")
+    .trim()
+    .slice(0, SERVICE_DESCRIPTION_MAX);
+
+  // Sin foto cargada el check va deshabilitado y no se envía, así que esto
+  // también lo deja apagado, que es lo correcto.
+  const showPhoto = formData.get("showPhoto") === "on";
+
+  /*
    * En qué card del catálogo entra. Vacío es "sin categoría" y es un valor
    * legítimo: queda suelto en el primer nivel, que es como estaban todos los
    * servicios antes de que existieran las categorías. Se comprueba que exista
@@ -626,6 +642,8 @@ export async function saveService(
     depositAmount: deposit,
     active,
     sortOrder,
+    description,
+    showPhoto,
   };
 
   if (id) {
@@ -659,16 +677,14 @@ export async function deleteService(
 }
 
 /**
- * La ficha del servicio: qué es, si su foto se muestra y cuánto sale.
+ * La parte del servicio que escribe quien lo hace: la explicación y si su foto
+ * se muestra.
  *
- * Es lo único de un servicio que NO exige ser administración. La duración y el
- * nombre definen el negocio y los fija la dueña; la explicación de qué es un
- * kapping la escribe quien lo hace.
- *
- * El precio es el caso mixto: se edita en esta pantalla por comodidad —es lo
- * primero que se cambia y estaba a dos clics de distancia— pero sigue siendo
- * cosa de la administración. Para una profesional el campo ni se dibuja, y si
- * igual llegara en el formulario se ignora acá, que es lo único que cuenta.
+ * Es lo único de un servicio que NO exige ser administración. El nombre, la
+ * duración, el precio y la seña definen el negocio y los fija la dueña con
+ * `saveService`; la explicación de qué es un kapping la escribe quien lo hace.
+ * Las dos acciones guardan desde la misma pantalla, cada una con los campos de
+ * su rol: por eso acá no hay ni precio ni seña, ni siquiera ignorados.
  *
  * El aislamiento no se comprueba leyendo la fila antes: la condición de alcance
  * va en el WHERE, así el id de un servicio ajeno no afecta ninguna fila y la
@@ -692,54 +708,16 @@ export async function saveServiceInfo(
   // también lo deja apagado, que es lo correcto.
   const showPhoto = formData.get("showPhoto") === "on";
 
-  const values: Partial<typeof services.$inferInsert> = { description, showPhoto };
-
-  if (user.role === "admin") {
-    const rawPrice = String(formData.get("price") ?? "").trim();
-    const price = rawPrice ? Number(rawPrice.replace(",", ".")) : null;
-
-    if (price !== null && (!Number.isFinite(price) || price < 0)) {
-      return error("El precio no es válido.");
-    }
-
-    /*
-     * La misma regla que en Profesionales: la seña no puede terminar por encima
-     * del precio. Acá el precio es lo que cambia y la seña lo que ya estaba
-     * cargado, así que hay que leerla para poder comparar.
-     */
-    if (price !== null) {
-      const [current] = await db
-        .select({ depositAmount: services.depositAmount })
-        .from(services)
-        .where(eq(services.id, id))
-        .limit(1);
-
-      if (!current) return error("Servicio no encontrado.");
-
-      if (current.depositAmount !== null && current.depositAmount > price) {
-        return error(
-          `Este servicio tiene una seña de ${formatMoney(current.depositAmount)}. ` +
-            "Bajala en Profesionales o poné un precio mayor.",
-        );
-      }
-    }
-
-    // Vacío borra el precio a propósito: es cómo se vuelve a "sin precio".
-    values.price = price;
-  }
-
   const result = await db
     .update(services)
-    .set(values)
+    .set({ description, showPhoto })
     .where(withScope(user, services.professionalId, eq(services.id, id)));
 
   if (result.rowsAffected === 0) return error("Servicio no encontrado.");
 
   refreshAll();
-  return ok("Ficha guardada.");
+  return ok("Servicio guardado.");
 }
-
-/* ── Horarios ───────────────────────────────────────────────────────── */
 
 export async function addWorkingHour(
   _prev: ActionState,

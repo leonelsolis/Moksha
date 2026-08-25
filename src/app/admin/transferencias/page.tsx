@@ -44,8 +44,8 @@ export default async function TransfersPage() {
         <Alert tone="info">
           El cobro por transferencia está desactivado. Se prende, y se cargan
           los datos de la cuenta, en{" "}
-          <Link href="/admin/ajustes" className="underline underline-offset-4">
-            Ajustes
+          <Link href="/admin/depositos" className="underline underline-offset-4">
+            Señas y cobros
           </Link>
           .
         </Alert>
@@ -97,8 +97,8 @@ export default async function TransfersPage() {
         <Alert tone="error" title="Falta a dónde transferir">
           El cobro por transferencia está encendido pero no hay alias ni CBU
           cargado, así que no se le está ofreciendo a nadie. Cargalo en{" "}
-          <Link href="/admin/ajustes" className="underline underline-offset-4">
-            Ajustes
+          <Link href="/admin/depositos" className="underline underline-offset-4">
+            Señas y cobros
           </Link>
           .
         </Alert>

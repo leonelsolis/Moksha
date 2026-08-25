@@ -29,8 +29,8 @@ import {
  *
  * Es el árbol de cards que ve la clienta: "Esmaltado semipermanente" y adentro
  * los tipos que hay. Acá se arma la estructura; a qué categoría va cada
- * servicio se elige junto al servicio, en Profesionales, porque es un dato del
- * servicio y no de la categoría.
+ * servicio se elige junto al servicio, en la otra pestaña de esta sección,
+ * porque es un dato del servicio y no de la categoría.
  *
  * Todo el árbol se dibuja de una, con cada categoría abierta en su propio
  * formulario. Son pocas y se acomodan de una sentada: obligar a entrar y salir
@@ -89,11 +89,8 @@ export default async function CategoriesPage() {
           Cómo se agrupan los servicios en la web: primero las cards grandes y
           adentro las que correspondan. A qué categoría va cada servicio se
           elige en{" "}
-          <Link
-            href="/admin/profesionales"
-            className="underline underline-offset-4"
-          >
-            Profesionales
+          <Link href="/admin/servicios" className="underline underline-offset-4">
+            Servicios
           </Link>
           , junto a su precio y su duración.
         </p>
