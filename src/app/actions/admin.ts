@@ -895,6 +895,133 @@ export async function addOverride(
   return ok("Horario especial cargado para ese día.");
 }
 
+/**
+ * Carga de una sola vez el horario de varios días del mes.
+ *
+ * Es para las profesionales de horario rotativo: a comienzo de mes les pasan
+ * la grilla y no hay un horario "de todas las semanas" que valga. En vez de
+ * agregar treinta excepciones sueltas, se tildan los días que tienen el mismo
+ * horario y se cargan juntos; se repite una vez por cada turno distinto
+ * (mañana, tarde, noche) hasta cubrir el mes.
+ *
+ * Lo que escribe son las mismas excepciones por fecha de siempre, así que la
+ * disponibilidad no necesita saber nada nuevo: un día cargado acá pisa al
+ * horario semanal exactamente igual que un feriado.
+ *
+ * `mode` decide qué queda en los días elegidos:
+ *   custom  → atiende en las franjas declaradas, y solo en esas.
+ *   closed  → ese día no atiende.
+ *   clear   → se borra lo cargado y el día vuelve a regirse por el semanal.
+ *
+ * Siempre reemplaza: lo que hubiera cargado en esos días se borra primero. Es
+ * lo que se espera al recargar un mes que llegó corregido, y evita que dos
+ * pasadas dejen franjas duplicadas.
+ */
+export async function setMonthDays(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const professionalId = Number(formData.get("professionalId"));
+  const mode = String(formData.get("mode") ?? "");
+  const note = String(formData.get("note") ?? "").trim();
+
+  if (!professionalId) return error("Profesional no encontrada.");
+  if (!canAccessProfessional(user, professionalId)) return error(FORBIDDEN);
+  if (mode !== "custom" && mode !== "closed" && mode !== "clear") {
+    return error("Tipo inválido.");
+  }
+
+  const dates = [
+    ...new Set(formData.getAll("days").map((value) => String(value))),
+  ].filter(isValidDateString);
+
+  if (dates.length === 0) return error("Elegí al menos un día.");
+
+  // Dos franjas alcanzan para mañana y tarde. Para un día más partido se
+  // vuelve a cargar ese día solo, sumando la franja que falte.
+  const ranges: { startMinute: number; endMinute: number }[] = [];
+
+  if (mode === "custom") {
+    for (const [startKey, endKey] of [
+      ["start", "end"],
+      ["start2", "end2"],
+    ] as const) {
+      const rawStart = String(formData.get(startKey) ?? "").trim();
+      const rawEnd = String(formData.get(endKey) ?? "").trim();
+
+      // La segunda franja es opcional: vacía del todo, no es un error.
+      if (!rawStart && !rawEnd) continue;
+
+      const start = parseMinute(rawStart);
+      const end = parseMinute(rawEnd);
+
+      if (start === null || end === null) return error("Revisá los horarios.");
+      if (end <= start) {
+        return error("La hora de fin tiene que ser posterior a la de inicio.");
+      }
+
+      ranges.push({ startMinute: start, endMinute: end });
+    }
+
+    if (ranges.length === 0) return error("Cargá el horario de esos días.");
+
+    if (
+      ranges.length === 2 &&
+      ranges[0].startMinute < ranges[1].endMinute &&
+      ranges[1].startMinute < ranges[0].endMinute
+    ) {
+      return error("Las dos franjas se superponen entre sí.");
+    }
+  }
+
+  await db
+    .delete(scheduleOverrides)
+    .where(
+      and(
+        eq(scheduleOverrides.professionalId, professionalId),
+        inArray(scheduleOverrides.date, dates),
+      ),
+    );
+
+  if (mode === "closed") {
+    await db.insert(scheduleOverrides).values(
+      dates.map((date) => ({
+        professionalId,
+        date,
+        kind: "closed" as const,
+        startMinute: null,
+        endMinute: null,
+        note,
+      })),
+    );
+  } else if (mode === "custom") {
+    await db.insert(scheduleOverrides).values(
+      dates.flatMap((date) =>
+        ranges.map((range) => ({
+          professionalId,
+          date,
+          kind: "custom" as const,
+          startMinute: range.startMinute,
+          endMinute: range.endMinute,
+          note,
+        })),
+      ),
+    );
+  }
+
+  refreshAll();
+
+  const count = `${dates.length} ${dates.length === 1 ? "día" : "días"}`;
+
+  if (mode === "clear") {
+    return ok(`${count} sin horario propio: vuelven a seguir el semanal.`);
+  }
+  if (mode === "closed") return ok(`${count} marcados como que no atiende.`);
+  return ok(`Horario cargado en ${count}.`);
+}
+
 export async function deleteOverride(
   _prev: ActionState,
   formData: FormData,
