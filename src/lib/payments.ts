@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { appointments, professionals } from "@/db/schema";
 import type { Appointment, Service } from "@/db/schema";
 import { conflictingAppointmentIds } from "./availability";
+import { confirmGroupSiblings } from "./booking-group";
 import {
   createPreference,
   getPayment,
@@ -374,6 +375,13 @@ export async function settlePayment(
       mpCheckoutUrl: null,
     })
     .where(eq(appointments.id, appointmentId));
+
+  /*
+   * Si la visita se reparte entre profesionales, la seña que acaba de entrar es
+   * la de todos los tramos: los demás se confirman también. Ver
+   * `booking-group.ts`.
+   */
+  await confirmGroupSiblings(appointment, now);
 
   /*
    * El token en claro no está en la base: solo su hash. Quien lo tenga a mano

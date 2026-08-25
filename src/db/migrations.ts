@@ -501,6 +501,39 @@ const MIGRATIONS: Migration[] = [
     `INSERT OR IGNORE INTO settings (key, value) VALUES ('transfer_enabled', 'false')`,
     `INSERT OR IGNORE INTO settings (key, value) VALUES ('transfer_hold_minutes', '1440')`,
   ],
+
+  // ── v14 · turnos con más de una profesional ─────────────────────────────
+  async (client) => [
+    /**
+     * Una misma visita puede repartirse entre dos profesionales: las manos con
+     * una y los pies con otra, uno después del otro.
+     *
+     * Eso NO se guarda como un turno con dos dueñas. Cada tramo sigue siendo
+     * una fila común y corriente —su profesional, su horario, su servicio, su
+     * token de cancelación—, porque es lo que la agenda de cada una tiene que
+     * ver y lo que el índice antichoque sabe comparar. Lo único que se agrega
+     * es una marca que dice "estos tramos se sacaron juntos".
+     *
+     * `booking_group` es esa marca: el mismo texto al azar en los tramos de
+     * una misma reserva. NULL en todo lo que ya existe y en todo turno de una
+     * sola profesional, que siguen siendo la enorme mayoría.
+     *
+     * Sirve para tres cosas y ninguna de ellas cambia cómo se ocupa la agenda:
+     * mostrar la visita completa en la pantalla del turno, confirmar los dos
+     * tramos con una sola seña, y saber en el panel que ese turno viene con
+     * otro pegado. Cancelar sigue siendo tramo por tramo.
+     */
+    ...(await addColumns(client, "appointments", { booking_group: "TEXT" })),
+
+    /**
+     * Solo entran las filas que pertenecen a una reserva compartida, que son
+     * unas pocas: la pregunta que se hace siempre es "¿qué otros tramos tiene
+     * esta reserva?", nunca se recorre la columna entera.
+     */
+    `CREATE INDEX IF NOT EXISTS appointments_group_idx
+       ON appointments(booking_group)
+       WHERE booking_group IS NOT NULL`,
+  ],
 ];
 
 /**

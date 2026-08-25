@@ -258,6 +258,146 @@ function computeDay(ctx: ScheduleContext, date: string): DayAvailability {
   };
 }
 
+/**
+ * ¿Entra un turno de este largo justo acá?
+ *
+ * Es la misma pregunta que contesta `computeDay`, pero para un horario de
+ * inicio cualquiera en vez de para la grilla del día. La diferencia importa
+ * cuando una visita se reparte entre dos profesionales: la primera empieza en
+ * un horario de su grilla, pero la segunda arranca cuando termina la primera,
+ * y ese momento no tiene por qué caer en un múltiplo de la duración de la
+ * segunda. Preguntar por la grilla ahí escondería huecos que existen.
+ *
+ * Las reglas son las de siempre y en el mismo orden: profesional activa, sin
+ * vacaciones, el turno entero adentro de UNA franja de trabajo —no se puede
+ * empezar antes del almuerzo y terminar después—, sin pisar nada tomado y
+ * respetando la antelación mínima.
+ */
+function fitsAt(
+  ctx: ScheduleContext,
+  date: string,
+  startMinute: number,
+  duration: number,
+): boolean {
+  if (!ctx.professional.active) return false;
+  if (isOnVacation(ctx.professional, ctx.vacationRanges, date)) return false;
+
+  const slot = { startMinute, endMinute: startMinute + duration };
+
+  const ranges = rangesForDate(ctx, date);
+  const insideShift = ranges.some(
+    (range) =>
+      slot.startMinute >= range.startMinute && slot.endMinute <= range.endMinute,
+  );
+  if (!insideShift) return false;
+
+  const taken = ctx.booked.get(date) ?? [];
+  if (taken.some((t) => overlaps(slot, t))) return false;
+
+  const minLeadMinutes = settingInt(ctx.settings, "min_hours_before_booking") * 60;
+  return (
+    minutesUntil(date, slot.startMinute, ctx.settings.timezone) >= minLeadMinutes
+  );
+}
+
+/** Un tramo de la visita: quién atiende y cuánto dura lo que le toca. */
+export type AvailabilityLeg = { professional: Professional; duration: number };
+
+/**
+ * Los horarios en los que entra una visita repartida entre profesionales.
+ *
+ * Los tramos van uno detrás del otro, en el orden en que se eligieron: si la
+ * primera atiende 60' y la segunda 30', un inicio a las 10:00 significa 10:00
+ * con la primera y 11:00 con la segunda. Por eso lo que se devuelve es un solo
+ * horario de inicio: es el de la visita entera, y de ahí sale el de cada tramo
+ * sumando duraciones.
+ *
+ * Los candidatos salen de la grilla del PRIMER tramo, que es la que la clienta
+ * ve y elige; los demás se comprueban con `fitsAt`, porque su horario ya no lo
+ * elige nadie sino que lo fija el tramo anterior.
+ *
+ * Con un solo tramo devuelve exactamente los horarios de siempre: la grilla
+ * del primero sin ningún filtro extra.
+ */
+export async function getChainAvailability(options: {
+  legs: AvailabilityLeg[];
+  fromDate: string;
+  toDate: string;
+  settings?: Settings;
+}): Promise<Map<string, number[]>> {
+  const settings = options.settings ?? (await getSettings());
+
+  const contexts = await Promise.all(
+    options.legs.map((leg) =>
+      loadContext(
+        leg.professional,
+        leg.duration,
+        options.fromDate,
+        options.toDate,
+        settings,
+      ),
+    ),
+  );
+
+  const result = new Map<string, number[]>();
+  if (contexts.length === 0) return result;
+
+  for (
+    let date = options.fromDate;
+    date <= options.toDate;
+    date = addDays(date, 1)
+  ) {
+    const starts = computeDay(contexts[0], date)
+      .openSlots.map((slot) => slot.startMinute)
+      .filter((start) => chainFits(contexts, options.legs, date, start));
+
+    if (starts.length > 0) result.set(date, starts);
+  }
+
+  return result;
+}
+
+/** ¿Entran todos los tramos, uno detrás del otro, empezando a esta hora? */
+function chainFits(
+  contexts: ScheduleContext[],
+  legs: AvailabilityLeg[],
+  date: string,
+  startMinute: number,
+): boolean {
+  let start = startMinute;
+  for (let index = 0; index < legs.length; index++) {
+    // El primero ya salió de la grilla, que es un filtro más estricto que este.
+    if (index > 0 && !fitsAt(contexts[index], date, start, legs[index].duration)) {
+      return false;
+    }
+    start += legs[index].duration;
+  }
+  return true;
+}
+
+/**
+ * Verificación final de una visita repartida, antes de guardar nada.
+ *
+ * Es a `getChainAvailability` lo que `isSlotBookable` es a la disponibilidad de
+ * un día: se corre en el servidor sobre datos frescos, porque entre que la
+ * pantalla mostró el horario y la clienta confirmó pudo tomarlo otra persona.
+ */
+export async function isChainBookable(options: {
+  legs: AvailabilityLeg[];
+  date: string;
+  startMinute: number;
+  settings: Settings;
+}): Promise<boolean> {
+  const starts = await getChainAvailability({
+    legs: options.legs,
+    fromDate: options.date,
+    toDate: options.date,
+    settings: options.settings,
+  });
+
+  return (starts.get(options.date) ?? []).includes(options.startMinute);
+}
+
 /** Ventana de fechas reservables según la configuración del negocio. */
 export function bookingWindow(settings: Settings, today: string) {
   return {

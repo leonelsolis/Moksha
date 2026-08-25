@@ -18,6 +18,7 @@ import {
   formatTimestampLong,
   minutesUntil,
 } from "@/lib/dates";
+import { groupLegs } from "@/lib/booking-group";
 import { formatMoneyExact } from "@/lib/money";
 import { formatMoney, holdIsAlive, isPaidButLost } from "@/lib/payments";
 import { getSettings, settingInt } from "@/lib/settings";
@@ -45,13 +46,17 @@ export const metadata = { title: "Tu turno", robots: { index: false } };
 
 type Props = {
   params: Promise<{ token: string }>;
-  /** `pago` lo agrega Mercado Pago al volver del checkout. */
-  searchParams: Promise<{ nuevo?: string; pago?: string }>;
+  /**
+   * `pago` lo agrega Mercado Pago al volver del checkout. `parcial` lo agrega
+   * la reserva cuando uno de los tramos de la visita se perdió en la carrera
+   * por el horario.
+   */
+  searchParams: Promise<{ nuevo?: string; pago?: string; parcial?: string }>;
 };
 
 export default async function AppointmentPage({ params, searchParams }: Props) {
   const { token } = await params;
-  const { nuevo, pago } = await searchParams;
+  const { nuevo, pago, parcial } = await searchParams;
 
   if (!looksLikeToken(token)) notFound();
 
@@ -70,6 +75,17 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
 
   const { appointment } = row;
   const settings = await getSettings();
+
+  /*
+   * Los tramos de la visita, cuando se repartió entre profesionales.
+   *
+   * La clienta tiene un solo link y espera ver todo lo que sacó, así que la
+   * pantalla muestra la visita entera aunque cada tramo sea un turno aparte.
+   * Vacío —lo normal— significa un único turno y todo lo de abajo se comporta
+   * como siempre.
+   */
+  const legs = await groupLegs(appointment.bookingGroup);
+  const shared = legs.length > 1;
 
   const isBooked = appointment.status === "booked";
   /** Pre-reserva viva: falta pagar la seña y el horario sigue retenido. */
@@ -111,6 +127,22 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
 
   const isNew = nuevo === "1" && isBooked;
 
+  /**
+   * Un tramo de la visita se perdió: alguien tomó ese horario entre que la
+   * clienta lo eligió y confirmó. Lo que sí se pudo guardar quedó guardado, y
+   * eso es lo que hay que decir sin vueltas.
+   */
+  const isPartial = parcial === "1" && shared;
+
+  /*
+   * Qué tramos siguen en pie y se pueden cancelar.
+   *
+   * Con un solo turno esto es el de siempre. Con una visita repartida, cada
+   * tramo se cancela por su cuenta: cancelar las manos no cancela los pies.
+   */
+  const activeLegs = legs.filter((leg) => leg.appointment.status === "booked");
+  const linkLegId = activeLegs[0]?.appointment.id ?? null;
+
   /*
    * Los datos de la cuenta se leen siempre, no solo cuando hacen falta: son
    * cuatro campos de una tabla que ya está cargada, y así la condición de
@@ -131,12 +163,19 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
   // El mapa solo tiene sentido si hay a dónde ir: con el turno en pie y con una
   // dirección cargada en Ajustes.
   const address = settings.contact_address.trim();
-  const showMap = isBooked && address !== "";
+  const showMap = (isBooked || activeLegs.length > 0) && address !== "";
 
   // La pre-reserva no está cancelada: el horario sigue guardado. Se muestra con
   // los datos a la vista, igual que un turno confirmado.
+  // En una visita repartida, que el tramo del link esté cancelado no significa
+  // que la visita lo esté: puede seguir en pie el otro. El cartel sale recién
+  // cuando no queda ninguno.
   const isCancelled =
-    !isBooked && !isPending && !isExpired && !isPaidWithoutSlot;
+    !isBooked &&
+    !isPending &&
+    !isExpired &&
+    !isPaidWithoutSlot &&
+    activeLegs.length === 0;
 
   return (
     <>
@@ -171,6 +210,16 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
                 {isPending ? "Tu reserva" : "Tu turno"}
               </h1>
             )}
+
+            {isPartial ? (
+              <div className="mb-5">
+                <Alert tone="warning" title="Uno de los turnos no se pudo guardar">
+                  Alguien tomó ese horario justo mientras confirmabas. Lo que ves
+                  acá abajo sí quedó reservado; por lo que falta, sacá otro turno
+                  o escribinos y lo acomodamos.
+                </Alert>
+              </div>
+            ) : null}
 
             {isPending ? (
               <div className="mb-5">
@@ -212,7 +261,7 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
 
             <section
               className={`panel p-4 sm:p-5 ${
-                isBooked || isPending ? "" : "opacity-70"
+                isBooked || isPending || activeLegs.length > 0 ? "" : "opacity-70"
               }`}
             >
               <dl className="grid grid-cols-[auto_1fr] gap-x-5 gap-y-3 text-sm">
@@ -224,35 +273,74 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
                   {capitalize(formatDateLong(appointment.date, true))}
                 </dd>
 
-                <dt className="flex items-center gap-1.5 text-ink-muted">
-                  <Icon name="clock" className="size-4" />
-                  Hora
-                </dt>
-                <dd className="font-medium tabular">
-                  {formatMinute(appointment.startMinute)} a{" "}
-                  {formatMinute(appointment.endMinute)}
-                </dd>
-
-                <dt className="flex items-center gap-1.5 text-ink-muted">
-                  <Icon name="user" className="size-4" />
-                  Atiende
-                </dt>
-                <dd>
-                  {row.professionalName}
-                  {row.professionalSpecialty ? (
-                    <span className="text-ink-muted">
-                      {" "}
-                      · {row.professionalSpecialty}
-                    </span>
-                  ) : null}
-                </dd>
-
-                {appointment.serviceName ? (
+                {shared ? (
+                  /*
+                    Una visita repartida se lee como una secuencia: primero
+                    esto con una, después aquello con la otra. Por eso los
+                    tramos van en una sola fila de la ficha y en orden, en vez
+                    de repetir "Hora / Atiende / Servicio" dos veces.
+                  */
                   <>
-                    <dt className="text-ink-muted">Servicio</dt>
-                    <dd>{appointment.serviceName}</dd>
+                    <dt className="flex items-center gap-1.5 text-ink-muted">
+                      <Icon name="clock" className="size-4" />
+                      La visita
+                    </dt>
+                    <dd className="space-y-2">
+                      {legs.map(({ appointment: leg, professionalName }) => (
+                        <div key={leg.id}>
+                          <span className="font-medium tabular">
+                            {formatMinute(leg.startMinute)} a{" "}
+                            {formatMinute(leg.endMinute)}
+                          </span>
+                          <span className="text-ink-muted"> · </span>
+                          <span>{leg.serviceName || "Turno"}</span>
+                          <span className="block text-ink-soft">
+                            con {professionalName}
+                            {leg.status === "booked" ||
+                            leg.status === "pending_payment" ? null : (
+                              <span className="text-ink-muted">
+                                {" "}
+                                · {legStatusLabel(leg.status)}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ))}
+                    </dd>
                   </>
-                ) : null}
+                ) : (
+                  <>
+                    <dt className="flex items-center gap-1.5 text-ink-muted">
+                      <Icon name="clock" className="size-4" />
+                      Hora
+                    </dt>
+                    <dd className="font-medium tabular">
+                      {formatMinute(appointment.startMinute)} a{" "}
+                      {formatMinute(appointment.endMinute)}
+                    </dd>
+
+                    <dt className="flex items-center gap-1.5 text-ink-muted">
+                      <Icon name="user" className="size-4" />
+                      Atiende
+                    </dt>
+                    <dd>
+                      {row.professionalName}
+                      {row.professionalSpecialty ? (
+                        <span className="text-ink-muted">
+                          {" "}
+                          · {row.professionalSpecialty}
+                        </span>
+                      ) : null}
+                    </dd>
+
+                    {appointment.serviceName ? (
+                      <>
+                        <dt className="text-ink-muted">Servicio</dt>
+                        <dd>{appointment.serviceName}</dd>
+                      </>
+                    ) : null}
+                  </>
+                )}
 
                 <dt className="text-ink-muted">A nombre de</dt>
                 <dd>
@@ -322,6 +410,45 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
                   blockedReason={null}
                 />
               </div>
+            ) : shared && activeLegs.length > 0 ? (
+              /*
+                Un botón por tramo: la clienta puede querer soltar el de una
+                profesional y quedarse con el de la otra. El link a la visita se
+                muestra una sola vez, en el primero que siga en pie.
+              */
+              <div className="mt-5 space-y-4">
+                {activeLegs.map(({ appointment: leg, professionalName }) => {
+                  const left = minutesUntil(
+                    leg.date,
+                    leg.startMinute,
+                    settings.timezone,
+                  );
+                  const legPassed = left < 0;
+                  const legWithinCutoff =
+                    cutoffHours > 0 && left < cutoffHours * 60;
+
+                  return (
+                    <ManageAppointment
+                      key={leg.id}
+                      token={token}
+                      appointmentId={leg.id}
+                      showLink={leg.id === linkLegId}
+                      canCancel={!legPassed && !legWithinCutoff}
+                      blockedReason={
+                        legPassed
+                          ? "Este turno ya pasó."
+                          : legWithinCutoff
+                            ? `Los turnos se pueden cancelar hasta ${cutoffHours} ${
+                                cutoffHours === 1 ? "hora" : "horas"
+                              } antes. Comunicate con nosotros para reprogramarlo.`
+                            : null
+                      }
+                      depositPaid={depositPaid && leg.id === appointment.id}
+                      cancelLabel={`Cancelar el turno con ${professionalName}`}
+                    />
+                  );
+                })}
+              </div>
             ) : isBooked ? (
               <div className="mt-5">
                 <ManageAppointment
@@ -354,6 +481,13 @@ export default async function AppointmentPage({ params, searchParams }: Props) {
       <SiteFooter settings={settings} />
     </>
   );
+}
+
+/** Cómo se lee el estado de un tramo que ya no está en pie. */
+function legStatusLabel(status: string) {
+  if (status === "expired_payment") return "reserva vencida";
+  if (status === "cancelled_by_admin") return "cancelado por el local";
+  return "cancelado";
 }
 
 function capitalize(value: string) {

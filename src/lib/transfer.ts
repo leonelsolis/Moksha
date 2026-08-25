@@ -8,6 +8,7 @@ import { appointments, professionals } from "@/db/schema";
 import type { AdminUser, Appointment, Service } from "@/db/schema";
 import { professionalScope } from "./auth";
 import { conflictingAppointmentIds } from "./availability";
+import { confirmGroupSiblings } from "./booking-group";
 import { announceNewBooking } from "./notify";
 import { depositFor } from "./payments";
 import { getSettings, settingBool, settingInt, type Settings } from "./settings";
@@ -330,6 +331,9 @@ export async function confirmTransfer(
   if (updated.length === 0) {
     return { outcome: "already_confirmed", appointmentId };
   }
+
+  // La transferencia paga la visita entera: si hay más tramos, se confirman.
+  await confirmGroupSiblings(appointment, now);
 
   /*
    * El mail sale sin link al turno: de la clienta tenemos solo el hash del

@@ -257,6 +257,21 @@ export const appointments = sqliteTable(
     /** Lo que la profesional quiera anotar. Solo se ve en el panel. */
     notes: text("notes").notNull().default(""),
     /**
+     * Los tramos de una misma visita, cuando se reparte entre profesionales.
+     *
+     * Una clienta que se hace las manos con una y los pies con otra saca los
+     * dos turnos de una sentada, uno pegado al otro. Cada tramo es una fila
+     * normal —su profesional, su horario, su token— y esta columna es lo único
+     * que dice que se sacaron juntos: el mismo texto al azar en cada uno.
+     *
+     * NULL en todo turno de una sola profesional, que es el caso de siempre.
+     *
+     * No los ata: cada tramo se confirma, se cancela y se reprograma solo. Lo
+     * que hace el grupo es que la pantalla del turno muestre la visita entera y
+     * que una sola seña alcance para confirmar todo.
+     */
+    bookingGroup: text("booking_group"),
+    /**
      * Solo el hash SHA-256 del token de cancelación. El token en claro existe
      * únicamente en el link que recibe el cliente, así un volcado de la base
      * no permite cancelar turnos ajenos.
@@ -321,6 +336,7 @@ export const appointments = sqliteTable(
     uniqueIndex("appointments_cancel_token_idx").on(t.cancelTokenHash),
     index("appointments_date_idx").on(t.date, t.professionalId),
     index("appointments_lookup_idx").on(t.dni, t.email),
+    index("appointments_group_idx").on(t.bookingGroup),
   ],
 );
 
