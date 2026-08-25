@@ -1,12 +1,7 @@
 import Link from "next/link";
-import { asc } from "drizzle-orm";
+import { asc, count } from "drizzle-orm";
 
-import {
-  deleteService,
-  saveProfessional,
-  saveService,
-  toggleProfessionalActive,
-} from "@/app/actions/admin";
+import { saveProfessional, toggleProfessionalActive } from "@/app/actions/admin";
 import {
   removeProfessionalPhoto,
   uploadProfessionalPhoto,
@@ -18,18 +13,16 @@ import { ImageUpload } from "@/components/admin/ImageUpload";
 import { db } from "@/db";
 import { professionals, services } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth";
-import { getCategoryRows } from "@/lib/catalog";
-import { categoryOptions, type CategoryRow } from "@/lib/categories";
 
 /**
- * Alta y edición de profesionales y de los servicios que ofrece cada una.
+ * Quiénes trabajan: su ficha, su foto y su alta.
  *
- * Los servicios son los que definen cuánto dura cada turno: si una profesional
- * tiene uno solo, la web pública lo aplica sin preguntar nada; si tiene varios,
- * aparece un paso más donde el cliente elige.
- *
- * Los horarios y las vacaciones NO están acá: viven en Horarios, porque son lo
- * único de la configuración que cada profesional gestiona por su cuenta.
+ * Es la pantalla de las personas, no la de lo que hacen. Los servicios viven
+ * en Servicios —ahí se carga cada uno entero, con su duración, su precio y su
+ * explicación—, los horarios y las vacaciones en Horarios, y las cuentas para
+ * entrar al panel en Usuarios. Acá solo queda el atajo a cada una de esas
+ * pantallas, con la cuenta de servicios al lado para ver de un vistazo a quién
+ * le falta cargarlos: sin al menos uno no se le pueden sacar turnos.
  */
 
 export const dynamic = "force-dynamic";
@@ -39,35 +32,48 @@ export const metadata = { title: "Profesionales" };
 export default async function ProfessionalsPage() {
   await requireAdmin();
 
-  const [staff, allServices, categories] = await Promise.all([
+  const [staff, serviceCounts] = await Promise.all([
     db
       .select()
       .from(professionals)
       .orderBy(asc(professionals.sortOrder), asc(professionals.name)),
-    db.select().from(services).orderBy(asc(services.sortOrder), asc(services.id)),
-    getCategoryRows(),
+    // Solo la cuenta: los servicios se editan en su propia pantalla.
+    db
+      .select({
+        professionalId: services.professionalId,
+        total: count(services.id),
+      })
+      .from(services)
+      .groupBy(services.professionalId),
   ]);
+
+  const countByProfessional = new Map(
+    serviceCounts.map((row) => [row.professionalId, row.total]),
+  );
 
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-xl font-semibold tracking-tight">Profesionales</h1>
         <p className="mt-0.5 text-sm text-ink-soft">
-          Datos y servicios que ofrece cada una. Los horarios y las vacaciones se
-          cargan en{" "}
-          <Link href="/admin/horarios" className="underline underline-offset-4">
-            Horarios
-          </Link>
-          , y la explicación y la foto de cada servicio en{" "}
+          La ficha de cada una. Lo que ofrece se carga en{" "}
           <Link href="/admin/servicios" className="underline underline-offset-4">
             Servicios
+          </Link>
+          , cuándo trabaja en{" "}
+          <Link href="/admin/horarios" className="underline underline-offset-4">
+            Horarios
+          </Link>{" "}
+          y su cuenta para entrar al panel en{" "}
+          <Link href="/admin/usuarios" className="underline underline-offset-4">
+            Usuarios
           </Link>
           .
         </p>
       </div>
 
       {staff.map((person) => {
-        const ownServices = allServices.filter((s) => s.professionalId === person.id);
+        const serviceCount = countByProfessional.get(person.id) ?? 0;
 
         return (
           <section key={person.id} className="panel overflow-hidden">
@@ -92,9 +98,24 @@ export default async function ProfessionalsPage() {
                     No aparece en la web
                   </span>
                 ) : null}
+
+                {/* Sin servicios no se le pueden sacar turnos, así que la
+                    falta se avisa acá y no solo en la otra pantalla. */}
+                {serviceCount === 0 ? (
+                  <span className="badge border-warning-line bg-warning-soft text-warning">
+                    <Icon name="slash" className="size-3" />
+                    Sin servicios
+                  </span>
+                ) : null}
               </div>
 
               <div className="flex flex-wrap gap-1.5">
+                <Link href="/admin/servicios" className="btn btn-secondary btn-sm">
+                  <Icon name="tag" className="size-3.5" />
+                  Servicios
+                  <span className="text-xs text-ink-muted">({serviceCount})</span>
+                </Link>
+
                 <Link
                   href={`/admin/horarios?prof=${person.id}`}
                   className="btn btn-secondary btn-sm"
@@ -212,237 +233,6 @@ export default async function ProfessionalsPage() {
               </ActionForm>
             </details>
 
-            {/* ── Servicios ─────────────────────────────────────────── */}
-            <details className="group" open={ownServices.length === 0}>
-              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-2.5 text-sm text-ink-soft hover:bg-surface-sunken">
-                <span>
-                  Servicios y duración
-                  <span className="ml-2 text-xs text-ink-muted">
-                    {ownServices.length === 0
-                      ? "sin cargar"
-                      : `${ownServices.length} cargado${ownServices.length === 1 ? "" : "s"}`}
-                  </span>
-                </span>
-                <Icon
-                  name="chevronDown"
-                  className="size-4 transition-transform group-open:rotate-180"
-                />
-              </summary>
-
-              <div className="px-4 pb-4">
-                {ownServices.length === 0 ? (
-                  <p className="mb-3 rounded-sm border border-warning-line bg-warning-soft p-2.5 text-xs text-warning">
-                    Sin servicios cargados no se le pueden sacar turnos. Cargá al
-                    menos uno con su duración.
-                  </p>
-                ) : (
-                  <ul className="mb-3 divide-y divide-line rounded-sm border border-line">
-                    {ownServices.map((service) => (
-                      <li key={service.id} className="flex flex-wrap items-start gap-3 p-2.5">
-                        <ActionForm
-                          action={saveService}
-                          className="min-w-0 flex-1 space-y-2"
-                          feedback="none"
-                        >
-                          <input type="hidden" name="id" value={service.id} />
-                          <input type="hidden" name="professionalId" value={person.id} />
-
-                          {/* El nombre y la categoría arriba; los números
-                              abajo. Todo en una fila entraba cuando eran cuatro
-                              campos, no ahora. */}
-                          <div className="flex flex-wrap items-center gap-2">
-                            <input
-                              name="name"
-                              defaultValue={service.name}
-                              className="input min-w-40 flex-1 py-1 text-sm"
-                              aria-label="Nombre del servicio"
-                              required
-                              maxLength={60}
-                            />
-
-                            <CategorySelect
-                              id={`categoria-${service.id}`}
-                              categories={categories}
-                              value={service.categoryId}
-                              className="input w-52 py-1 text-sm"
-                            />
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2">
-                          <span className="flex items-center gap-1">
-                            <input
-                              name="durationMinutes"
-                              type="number"
-                              defaultValue={service.durationMinutes}
-                              min={5}
-                              max={480}
-                              step={5}
-                              className="input w-20 py-1 text-sm tabular"
-                              aria-label="Duración en minutos"
-                              required
-                            />
-                            <span className="text-xs text-ink-muted">min</span>
-                          </span>
-
-                          <span className="flex items-center gap-1">
-                            <span className="text-xs text-ink-muted">$</span>
-                            <input
-                              name="price"
-                              type="number"
-                              defaultValue={service.price ?? ""}
-                              min={0}
-                              step="0.01"
-                              className="input w-24 py-1 text-sm tabular"
-                              aria-label="Precio (opcional)"
-                              placeholder="—"
-                            />
-                          </span>
-
-                          {/* La seña viaja siempre en el formulario, aunque esté
-                              vacía: si no se enviara, guardar cualquier otro
-                              cambio del servicio la borraría. */}
-                          <span className="flex items-center gap-1">
-                            <span className="text-xs text-ink-muted">Seña $</span>
-                            <input
-                              name="depositAmount"
-                              type="number"
-                              defaultValue={service.depositAmount ?? ""}
-                              min={0}
-                              step="0.01"
-                              className="input w-24 py-1 text-sm tabular"
-                              aria-label="Seña a pagar online (opcional)"
-                              placeholder="—"
-                            />
-                          </span>
-
-                          <span className="flex items-center gap-1">
-                            <span className="text-xs text-ink-muted">Orden</span>
-                            <input
-                              name="sortOrder"
-                              type="number"
-                              defaultValue={service.sortOrder}
-                              className="input w-16 py-1 text-sm tabular"
-                              aria-label="Orden dentro de su categoría"
-                            />
-                          </span>
-
-                          <label className="flex items-center gap-1.5 text-xs">
-                            <input
-                              type="checkbox"
-                              name="active"
-                              defaultChecked={service.active}
-                              className="size-3.5 accent-[var(--color-accent)]"
-                            />
-                            Activo
-                          </label>
-
-                          <SubmitButton className="btn btn-secondary btn-sm" pendingLabel="…">
-                            Guardar
-                          </SubmitButton>
-                          </div>
-                        </ActionForm>
-
-                        <ActionForm action={deleteService} feedback="none">
-                          <input type="hidden" name="id" value={service.id} />
-                          <SubmitButton className="btn btn-ghost btn-sm" pendingLabel="…">
-                            <Icon name="trash" className="size-3.5" />
-                            <span className="sr-only">Eliminar {service.name}</span>
-                          </SubmitButton>
-                        </ActionForm>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-
-                <ActionForm action={saveService} resetOnSuccess>
-                  <input type="hidden" name="professionalId" value={person.id} />
-                  <input type="hidden" name="active" value="on" />
-
-                  <div className="flex flex-wrap items-end gap-2">
-                    <div className="min-w-40 flex-1">
-                      <label className="field-label" htmlFor={`new-service-${person.id}`}>
-                        Servicio nuevo
-                      </label>
-                      <input
-                        id={`new-service-${person.id}`}
-                        name="name"
-                        className="input"
-                        placeholder="Esmaltado semipermanente"
-                        required
-                        maxLength={60}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="field-label" htmlFor={`new-duration-${person.id}`}>
-                        Duración
-                      </label>
-                      <input
-                        id={`new-duration-${person.id}`}
-                        name="durationMinutes"
-                        type="number"
-                        className="input w-28 tabular"
-                        defaultValue={60}
-                        min={5}
-                        max={480}
-                        step={5}
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="field-label" htmlFor={`new-price-${person.id}`}>
-                        Precio
-                      </label>
-                      <input
-                        id={`new-price-${person.id}`}
-                        name="price"
-                        type="number"
-                        className="input w-28 tabular"
-                        min={0}
-                        step="0.01"
-                        placeholder="Opcional"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="field-label" htmlFor={`new-deposit-${person.id}`}>
-                        Seña
-                      </label>
-                      <input
-                        id={`new-deposit-${person.id}`}
-                        name="depositAmount"
-                        type="number"
-                        className="input w-28 tabular"
-                        min={0}
-                        step="0.01"
-                        placeholder="Opcional"
-                      />
-                    </div>
-
-                    <div>
-                      <label
-                        className="field-label"
-                        htmlFor={`new-category-${person.id}`}
-                      >
-                        Categoría
-                      </label>
-                      <CategorySelect
-                        id={`new-category-${person.id}`}
-                        categories={categories}
-                        value={null}
-                        className="input w-52"
-                      />
-                    </div>
-
-                    <SubmitButton className="btn btn-secondary">
-                      <Icon name="plus" className="size-3.5" />
-                      Agregar
-                    </SubmitButton>
-                  </div>
-                </ActionForm>
-              </div>
-            </details>
           </section>
         );
       })}
@@ -555,44 +345,5 @@ export default async function ProfessionalsPage() {
         </ActionForm>
       </section>
     </div>
-  );
-}
-
-/**
- * En qué card del catálogo entra el servicio.
- *
- * Sin categoría es una opción válida y la primera de la lista: el servicio
- * queda suelto en el primer nivel, que es donde estaban todos antes de que
- * existiera esta pantalla. Las categorías apagadas se ofrecen igual —con la
- * aclaración al lado—, porque asignar un servicio a una rama escondida es lo
- * que se hace justo antes de encenderla.
- */
-function CategorySelect({
-  id,
-  categories,
-  value,
-  className = "input",
-}: {
-  id: string;
-  categories: CategoryRow[];
-  value: number | null;
-  className?: string;
-}) {
-  return (
-    <select
-      id={id}
-      name="categoryId"
-      className={className}
-      defaultValue={value ?? ""}
-      aria-label="Categoría del servicio"
-    >
-      <option value="">— Sin categoría —</option>
-      {categoryOptions(categories).map((option) => (
-        <option key={option.id} value={option.id}>
-          {option.label}
-          {option.active ? "" : " (oculta)"}
-        </option>
-      ))}
-    </select>
   );
 }

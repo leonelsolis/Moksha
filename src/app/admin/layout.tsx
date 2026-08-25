@@ -18,6 +18,18 @@ export const metadata = { robots: { index: false, follow: false } };
  * La pantalla de login usa este mismo layout pero sin la navegación: cuando no
  * hay sesión se devuelven los children solos. Así el login no necesita estar
  * fuera de /admin ni duplicar el layout raíz.
+ *
+ * La navegación tiene dos niveles. Arriba, siete grupos que responden a "qué
+ * quiero hacer" —los turnos del día, el catálogo, el equipo, la plata, la
+ * configuración—; abajo, y solo cuando el grupo tiene más de una pantalla, las
+ * pantallas de ese grupo. Una sola fila de doce pestañas obligaba a recordar
+ * en cuál de todas estaba cada cosa; agrupadas, alcanza con saber de qué se
+ * trata lo que se busca.
+ *
+ * Un grupo con una sola pantalla visible no dibuja la segunda fila y toma el
+ * nombre y el ícono de esa pantalla. Es lo que hace que la misma estructura
+ * sirva para los dos roles sin escribir dos navegaciones: para una profesional
+ * "Equipo" es directamente "Mi perfil", y "Ajustes" es "Mi cuenta".
  */
 
 export type AdminNavItem = {
@@ -29,35 +41,100 @@ export type AdminNavItem = {
   professionalOnly?: boolean;
 };
 
-const NAV: AdminNavItem[] = [
-  { href: "/admin", label: "Turnos", icon: "list", adminOnly: false },
-  { href: "/admin/mensajes", label: "Mensajes", icon: "chat", adminOnly: false },
+export type AdminNavGroup = {
+  /** Nombre del grupo. Se ignora si queda una sola pantalla visible. */
+  label: string;
+  icon: IconName;
+  items: AdminNavItem[];
+};
+
+const NAV: AdminNavGroup[] = [
   {
-    href: "/admin/transferencias",
-    label: "Transferencias",
+    label: "Turnos",
+    icon: "list",
+    items: [{ href: "/admin", label: "Turnos", icon: "list", adminOnly: false }],
+  },
+  {
+    label: "Mensajes",
+    icon: "chat",
+    items: [
+      { href: "/admin/mensajes", label: "Mensajes", icon: "chat", adminOnly: false },
+    ],
+  },
+  {
+    label: "Horarios",
+    icon: "calendar",
+    items: [
+      {
+        href: "/admin/horarios",
+        label: "Horarios",
+        icon: "calendar",
+        adminOnly: false,
+      },
+    ],
+  },
+  {
+    // El catálogo: qué se ofrece y cómo se agrupa en la web.
+    label: "Servicios",
+    icon: "tag",
+    items: [
+      { href: "/admin/servicios", label: "Servicios", icon: "tag", adminOnly: false },
+      {
+        href: "/admin/categorias",
+        label: "Categorías",
+        icon: "folder",
+        adminOnly: true,
+      },
+    ],
+  },
+  {
+    // Quién trabaja y quién entra al panel. Para una profesional, su ficha.
+    label: "Equipo",
+    icon: "users",
+    items: [
+      {
+        href: "/admin/profesionales",
+        label: "Profesionales",
+        icon: "users",
+        adminOnly: true,
+      },
+      { href: "/admin/usuarios", label: "Usuarios", icon: "key", adminOnly: true },
+      {
+        href: "/admin/perfil",
+        label: "Mi perfil",
+        icon: "user",
+        adminOnly: false,
+        professionalOnly: true,
+      },
+    ],
+  },
+  {
+    // Todo lo que tiene que ver con la plata que entra antes del turno.
+    label: "Cobros",
     icon: "card",
-    adminOnly: false,
+    items: [
+      {
+        href: "/admin/depositos",
+        label: "Señas y cobros",
+        icon: "card",
+        adminOnly: true,
+      },
+      {
+        href: "/admin/transferencias",
+        label: "Transferencias",
+        icon: "card",
+        adminOnly: false,
+      },
+    ],
   },
-  { href: "/admin/horarios", label: "Horarios", icon: "calendar", adminOnly: false },
-  { href: "/admin/servicios", label: "Servicios", icon: "tag", adminOnly: false },
   {
-    href: "/admin/categorias",
-    label: "Categorías",
-    icon: "folder",
-    adminOnly: true,
+    label: "Ajustes",
+    icon: "settings",
+    items: [
+      { href: "/admin/ajustes", label: "Negocio", icon: "settings", adminOnly: true },
+      { href: "/admin/cuenta", label: "Mi cuenta", icon: "lock", adminOnly: false },
+    ],
   },
-  {
-    href: "/admin/perfil",
-    label: "Mi perfil",
-    icon: "user",
-    adminOnly: false,
-    professionalOnly: true,
-  },
-  { href: "/admin/profesionales", label: "Profesionales", icon: "users", adminOnly: true },
-  { href: "/admin/usuarios", label: "Usuarios", icon: "key", adminOnly: true },
-  { href: "/admin/depositos", label: "Señas", icon: "card", adminOnly: true },
-  { href: "/admin/ajustes", label: "Ajustes", icon: "settings", adminOnly: true },
-  { href: "/admin/cuenta", label: "Mi cuenta", icon: "lock", adminOnly: false },
 ];
 
 export default async function AdminLayout({
@@ -73,9 +150,12 @@ export default async function AdminLayout({
   const settings = await getSettings();
   const isAdmin = account.role === "admin";
 
-  const items = NAV.filter(
-    (item) => (!item.adminOnly || isAdmin) && (!item.professionalOnly || !isAdmin),
-  );
+  const groups = NAV.map((group) => ({
+    ...group,
+    items: group.items.filter(
+      (item) => (!item.adminOnly || isAdmin) && (!item.professionalOnly || !isAdmin),
+    ),
+  })).filter((group) => group.items.length > 0);
 
   /*
    * Cuántos WhatsApp esperan. Va en la navegación porque es lo único que hace
@@ -128,7 +208,7 @@ export default async function AdminLayout({
         </div>
 
         <AdminNav
-          items={items}
+          groups={groups}
           pendingMessages={pending}
           pendingTransfers={pendingTransfers}
         />

@@ -229,7 +229,7 @@ function StatusNotice({
     return (
       <Alert tone="warning" title="Ningún servicio tiene seña cargada">
         El cobro está listo, pero todos los servicios tienen la seña en blanco,
-        así que no se le pide nada a nadie. Cargá el monto en Profesionales.
+        así que no se le pide nada a nadie. Cargá el monto en Servicios.
       </Alert>
     );
   }

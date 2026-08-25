@@ -27,8 +27,8 @@ import { transferConfig } from "@/lib/transfer";
  * que releer media pantalla de configuración que no tiene nada que ver.
  *
  * El monto de cada seña NO se edita acá: se carga junto al precio del
- * servicio, en Profesionales, porque son el mismo dato del mismo servicio.
- * Acá se listan para poder ver de un vistazo qué se está cobrando.
+ * servicio, en Servicios, porque son el mismo dato del mismo servicio. Acá se
+ * listan para poder ver de un vistazo qué se está cobrando.
  */
 
 export const dynamic = "force-dynamic";
@@ -271,7 +271,7 @@ export default async function DepositsPage() {
           </div>
 
           <Link
-            href="/admin/profesionales"
+            href="/admin/servicios"
             className="text-sm text-accent underline underline-offset-4"
           >
             Editar montos
