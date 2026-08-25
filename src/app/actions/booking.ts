@@ -13,6 +13,7 @@ import type {
   LookupState,
 } from "@/lib/action-state";
 import { isSlotBookable, releaseExpiredHolds } from "@/lib/availability";
+import { combinedServiceName, readServiceIds } from "@/lib/booking-services";
 import { formatDateLong, formatMinute, minutesUntil, nowInTz } from "@/lib/dates";
 import { sendCancellationConfirmation } from "@/lib/email";
 import {
@@ -60,6 +61,12 @@ function fail(message: string, errors: FieldErrors = {}): BookingState {
  *      error de código saltee lo anterior, la base rechaza un segundo turno
  *      con el mismo inicio exacto.
  *
+ * El turno puede llevar más de un servicio —pies y manos en la misma
+ * sentada—, y eso no cambia nada de lo de arriba: sigue siendo una sola fila.
+ * Lo que se guarda es la suma, y la suma se arma acá con los servicios que
+ * traiga la base, nunca con lo que diga el formulario: del navegador solo se
+ * aceptan los ids.
+ *
  * De acá salen dos finales distintos, y cuál es lo decide `paymentPlanFor`:
  *
  *   · Sin cobro (Mercado Pago apagado, sin token, o servicio sin seña): el
@@ -85,11 +92,18 @@ export async function createBooking(
   }
 
   const professionalId = Number(formData.get("professionalId"));
-  const serviceId = Number(formData.get("serviceId"));
+  const serviceIds = readServiceIds(
+    String(formData.get("serviceIds") ?? formData.get("serviceId") ?? ""),
+  );
   const date = String(formData.get("date") ?? "");
   const startMinute = Number(formData.get("startMinute"));
 
-  if (!professionalId || !serviceId || !date || !Number.isFinite(startMinute)) {
+  if (
+    !professionalId ||
+    serviceIds.length === 0 ||
+    !date ||
+    !Number.isFinite(startMinute)
+  ) {
     return fail("Faltan datos del turno. Volvé a elegir el horario.");
   }
 
@@ -110,19 +124,38 @@ export async function createBooking(
 
   if (!professional) return fail("Esa profesional ya no está disponible.");
 
-  const [service] = await db
+  const rows = await db
     .select()
     .from(services)
     .where(
       and(
-        eq(services.id, serviceId),
+        inArray(services.id, serviceIds),
         eq(services.professionalId, professionalId),
         eq(services.active, true),
       ),
-    )
-    .limit(1);
+    );
 
-  if (!service) return fail("Ese servicio ya no está disponible.");
+  // Se pide que estén todos: reservar con uno menos sería darle a la clienta
+  // un turno más corto que el que pidió, y enterarse recién al llegar.
+  if (rows.length !== serviceIds.length) {
+    return fail("Alguno de los servicios ya no está disponible. Volvé a elegir.");
+  }
+
+  /*
+   * Lo elegido, en el orden en que se eligió y sumado.
+   *
+   * `serviceId` guarda el primero porque la columna es una sola y el nombre
+   * completo ya queda en `service_name`, que es lo que leen el panel, el mail
+   * y la pantalla del turno.
+   */
+  const chosen = serviceIds.map((id) => rows.find((row) => row.id === id)!);
+
+  const service = {
+    id: chosen[0].id,
+    name: combinedServiceName(chosen.map((row) => row.name)),
+    durationMinutes: chosen.reduce((total, row) => total + row.durationMinutes, 0),
+    depositAmount: chosen.reduce((total, row) => total + (row.depositAmount ?? 0), 0),
+  };
 
   // Chequeo completo contra las reglas del negocio: horario laboral,
   // vacaciones, excepciones, antelación mínima y turnos ya tomados.
