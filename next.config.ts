@@ -12,11 +12,12 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: [
           {
-            // Fuerza HTTPS en el navegador durante 2 años. `preload` queda
-            // listo por si en algún momento se envía el dominio a
-            // hstspreload.org; sin ese envío no tiene efecto extra.
+            // Fuerza HTTPS en el navegador durante 2 años, solo para el
+            // dominio raíz: sin `includeSubDomains` un subdominio futuro
+            // puede servirse sin HTTPS sin quedar bloqueado. (`preload`
+            // exige esa directiva, así que tampoco va.)
             key: "Strict-Transport-Security",
-            value: "max-age=63072000; includeSubDomains; preload",
+            value: "max-age=63072000",
           },
         ],
       },
