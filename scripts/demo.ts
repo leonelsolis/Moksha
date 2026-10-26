@@ -79,18 +79,24 @@ function client(i: number) {
   };
 }
 
+/** Cada paso a la vista: si algo se traba, se sabe dónde. */
+const step = (text: string) => console.log(`  · ${text}`);
+
 async function seed() {
+  step("Preparando data/demo.db");
   rmSync(DEMO_DB, { force: true });
   rmSync(`${DEMO_DB}-wal`, { force: true });
   rmSync(`${DEMO_DB}-shm`, { force: true });
   mkdirSync("data", { recursive: true });
 
+  step("Abriendo la base");
   // Recién acá: la conexión lee DATABASE_PATH al importarse.
   const { client: raw, db } = await import("../src/db/connection");
   const s = await import("../src/db/schema");
   const { runMigrations } = await import("../src/db/migrations");
 
   await runMigrations(raw);
+  step("Cargando negocio, profesionales y horarios");
 
   /* ── Negocio ───────────────────────────────────────────────────── */
 
@@ -267,6 +273,8 @@ async function seed() {
     startMinute: 14 * 60, endMinute: 20 * 60, note: "Solo tarde",
   });
 
+  step("Generando turnos");
+
   /* ── Turnos ────────────────────────────────────────────────────── */
 
   const blocked = (pid: number, date: string) =>
@@ -420,6 +428,7 @@ async function main() {
   await seed();
   if (process.argv.includes("--seed-only")) return;
 
+  step("Levantando el servidor");
   // Next hereda el entorno ya limpio de scripts/demo-env.ts.
   const next = spawn("npx", ["next", "dev"], { stdio: "inherit", env: process.env });
   next.on("exit", (code) => process.exit(code ?? 0));
