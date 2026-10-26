@@ -13,7 +13,7 @@ import type {
   LookupResult,
   LookupState,
 } from "@/lib/action-state";
-import { isChainBookable, releaseExpiredHolds } from "@/lib/availability";
+import { bookingWindow, isChainBookable, releaseExpiredHolds } from "@/lib/availability";
 import { readLegsOrSingle } from "@/lib/booking-legs";
 import { combinedServiceName } from "@/lib/booking-services";
 import { formatDateLong, formatMinute, minutesUntil, nowInTz } from "@/lib/dates";
@@ -134,6 +134,16 @@ export async function createBooking(
   }
 
   const settings = await getSettings();
+
+  /*
+   * La ventana reservable se comprueba acá y no solo en el calendario: el
+   * calendario no ofrece lo que está fuera de la ventana, pero un formulario
+   * armado a mano sí puede pedirlo.
+   */
+  const window = bookingWindow(settings, nowInTz(settings.timezone).date);
+  if (date < window.from || date > window.to) {
+    return fail("Ese día no está habilitado para reservar. Elegí otra fecha.");
+  }
 
   /*
    * Las profesionales y los servicios, en dos consultas para todos los tramos
