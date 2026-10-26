@@ -430,7 +430,11 @@ async function main() {
 
   step("Levantando el servidor");
   // Next hereda el entorno ya limpio de scripts/demo-env.ts.
-  const next = spawn("npx", ["next", "dev"], { stdio: "inherit", env: process.env });
+  // El binario local y no `npx`: npx puede quedarse resolviendo sin mostrar nada.
+  const next = spawn(process.execPath, ["node_modules/next/dist/bin/next", "dev"], {
+    stdio: "inherit",
+    env: process.env,
+  });
   next.on("exit", (code) => process.exit(code ?? 0));
 }
 
