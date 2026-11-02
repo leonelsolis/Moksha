@@ -187,7 +187,7 @@ export default async function SettingsPage() {
 
             <div>
               <label className="field-label" htmlFor="booking_until_date">
-                Fecha tope para reservar (opcional)
+                Abrir turnos al menos hasta (opcional)
               </label>
               <input
                 id="booking_until_date"
@@ -197,10 +197,10 @@ export default async function SettingsPage() {
                 defaultValue={settings.booking_until_date}
               />
               <p className="mt-1 text-xs text-ink-muted">
-                Clava el corte en un día fijo, que no se corre solo. Útil
-                para abrir un período puntual. Mientras no llegue, manda esta
-                fecha y se ignoran los días de al lado; pasada, se vuelve sola
-                a los días de al lado.
+                Adelanta la apertura de un período puntual sin esperar a que
+                los días de al lado lleguen solos. Nunca acorta: cuando esos
+                días ya llegan más lejos, mandan ellos y esta fecha deja de
+                contar sola.
               </p>
             </div>
 

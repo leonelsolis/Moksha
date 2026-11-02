@@ -25,14 +25,14 @@ export const SETTING_DEFAULTS = {
   /** Cuántos días hacia adelante se puede reservar. */
   booking_window_days: "45",
   /**
-   * Techo fijo opcional: la fecha más lejana reservable, en formato
-   * YYYY-MM-DD. Vacío = sin techo, manda `booking_window_days`.
+   * Apertura adelantada opcional, en formato YYYY-MM-DD. Vacío = manda
+   * `booking_window_days` a secas.
    *
-   * Existe para abrir un período puntual —"hasta el 31 de diciembre y nada
-   * más"— sin que el corte se corra un día cada día, que es lo que hace la
-   * ventana de días corridos. Mientras no llegue, tiene prioridad sobre
-   * `booking_window_days`. Pasada, se ignora y vuelve a mandar la ventana:
-   * la excepción se vence sola y no hay que acordarse de borrarla.
+   * Abre al menos hasta esa fecha, para habilitar un período puntual
+   * —diciembre entero por una promoción— sin esperar a que la cuenta de días
+   * llegue sola hasta ahí. Solo estira: cuando los días corridos ya llegan
+   * más lejos, mandan ellos. Por eso una fecha pasada deja de contar sola y
+   * no hay que acordarse de borrarla.
    */
   booking_until_date: "",
   /** Antelación mínima para tomar un turno, en horas. 0 = hasta último momento. */
