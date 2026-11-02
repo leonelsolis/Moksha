@@ -1059,6 +1059,7 @@ const EDITABLE_SETTINGS: SettingKey[] = [
   "contact_instagram",
   "timezone",
   "booking_window_days",
+  "booking_until_date",
   "min_hours_before_booking",
   "cancel_cutoff_hours",
   "allow_client_lookup",
@@ -1105,6 +1106,11 @@ export async function saveSettings(
   const window = Number(values.booking_window_days);
   if (!Number.isFinite(window) || window < 1 || window > 365) {
     return error("Los días de anticipación tienen que estar entre 1 y 365.");
+  }
+
+  const until = values.booking_until_date;
+  if (until && !isValidDateString(until)) {
+    return error("La fecha tope para reservar no es válida.");
   }
 
   const cutoff = Number(values.cancel_cutoff_hours);

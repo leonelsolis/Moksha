@@ -13,7 +13,13 @@ import {
   type Professional,
   type Service,
 } from "@/db/schema";
-import { addDays, isWithin, minutesUntil, weekdayOf } from "./dates";
+import {
+  addDays,
+  isValidDateString,
+  isWithin,
+  minutesUntil,
+  weekdayOf,
+} from "./dates";
 import { getSettings, settingInt, type Settings } from "./settings";
 
 /**
@@ -398,11 +404,25 @@ export async function isChainBookable(options: {
   return (starts.get(options.date) ?? []).includes(options.startMinute);
 }
 
-/** Ventana de fechas reservables según la configuración del negocio. */
+/**
+ * Ventana de fechas reservables según la configuración del negocio.
+ *
+ * Hay dos formas de marcar el corte y la fecha tope tiene prioridad, porque
+ * es la explícita: puesta, el corte es ese día y no se mueve. Vacía, manda la
+ * cuenta de días corridos, que corre el corte un día cada día.
+ *
+ * Con la fecha tope ya pasada, `to` queda antes que `from`: la ventana está
+ * vacía y no hay nada reservable, que es exactamente lo que pidió quien la
+ * puso. Los consumidores lo tratan como "sin turnos disponibles".
+ */
 export function bookingWindow(settings: Settings, today: string) {
+  const limit = settings.booking_until_date.trim();
+
   return {
     from: today,
-    to: addDays(today, settingInt(settings, "booking_window_days", 1)),
+    to: isValidDateString(limit)
+      ? limit
+      : addDays(today, settingInt(settings, "booking_window_days", 1)),
   };
 }
 

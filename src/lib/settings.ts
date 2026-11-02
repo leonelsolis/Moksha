@@ -24,6 +24,17 @@ export const SETTING_DEFAULTS = {
   timezone: "America/Argentina/Buenos_Aires",
   /** Cuántos días hacia adelante se puede reservar. */
   booking_window_days: "45",
+  /**
+   * Techo fijo opcional: la fecha más lejana reservable, en formato
+   * YYYY-MM-DD. Vacío = sin techo, manda `booking_window_days`.
+   *
+   * Existe para abrir un período puntual —"hasta el 31 de diciembre y nada
+   * más"— sin que el corte se corra un día cada día, que es lo que hace la
+   * ventana de días corridos. Puesta, tiene prioridad sobre
+   * `booking_window_days`. Una vez pasada, no queda nada reservable hasta que
+   * se mueva o se vacíe.
+   */
+  booking_until_date: "",
   /** Antelación mínima para tomar un turno, en horas. 0 = hasta último momento. */
   min_hours_before_booking: "2",
 
