@@ -407,24 +407,24 @@ export async function isChainBookable(options: {
 /**
  * Ventana de fechas reservables según la configuración del negocio.
  *
- * La fecha tope es una excepción temporal sobre los días corridos: mientras
- * no haya llegado, el corte es ese día fijo y no se mueve —así se abre un
- * período puntual, por ejemplo diciembre entero por una promoción—. Una vez
- * que pasa, se ignora y vuelve a mandar la cuenta de días corridos.
+ * Los días corridos son el piso de siempre. La fecha tope solo estira: abre
+ * al menos hasta ese día, para adelantar un período puntual —diciembre
+ * entero por una promoción— sin esperar a que la cuenta de días llegue sola.
  *
- * Ese vencimiento automático es a propósito: la promoción termina sola, sin
- * que nadie se acuerde de volver al panel a vaciar el campo, y sin que el
- * olvido deje el calendario cerrado.
+ * Nunca acorta. Cuando los días corridos ya llegan más lejos que la fecha
+ * —faltando una semana para el 31 con una ventana de dos— mandan ellos, así
+ * la primera semana de enero aparece a horario y no hay un día en que el
+ * calendario se achique. Lo mismo vale para una fecha ya pasada: queda atrás
+ * de los días corridos y deja de contar sola.
  */
 export function bookingWindow(settings: Settings, today: string) {
+  const rolling = addDays(today, settingInt(settings, "booking_window_days", 1));
   const limit = settings.booking_until_date.trim();
-  const vigente = isValidDateString(limit) && limit >= today;
+  const estira = isValidDateString(limit) && limit > rolling;
 
   return {
     from: today,
-    to: vigente
-      ? limit
-      : addDays(today, settingInt(settings, "booking_window_days", 1)),
+    to: estira ? limit : rolling,
   };
 }
 
