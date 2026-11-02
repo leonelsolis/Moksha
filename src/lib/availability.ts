@@ -407,20 +407,22 @@ export async function isChainBookable(options: {
 /**
  * Ventana de fechas reservables según la configuración del negocio.
  *
- * Hay dos formas de marcar el corte y la fecha tope tiene prioridad, porque
- * es la explícita: puesta, el corte es ese día y no se mueve. Vacía, manda la
- * cuenta de días corridos, que corre el corte un día cada día.
+ * La fecha tope es una excepción temporal sobre los días corridos: mientras
+ * no haya llegado, el corte es ese día fijo y no se mueve —así se abre un
+ * período puntual, por ejemplo diciembre entero por una promoción—. Una vez
+ * que pasa, se ignora y vuelve a mandar la cuenta de días corridos.
  *
- * Con la fecha tope ya pasada, `to` queda antes que `from`: la ventana está
- * vacía y no hay nada reservable, que es exactamente lo que pidió quien la
- * puso. Los consumidores lo tratan como "sin turnos disponibles".
+ * Ese vencimiento automático es a propósito: la promoción termina sola, sin
+ * que nadie se acuerde de volver al panel a vaciar el campo, y sin que el
+ * olvido deje el calendario cerrado.
  */
 export function bookingWindow(settings: Settings, today: string) {
   const limit = settings.booking_until_date.trim();
+  const vigente = isValidDateString(limit) && limit >= today;
 
   return {
     from: today,
-    to: isValidDateString(limit)
+    to: vigente
       ? limit
       : addDays(today, settingInt(settings, "booking_window_days", 1)),
   };
