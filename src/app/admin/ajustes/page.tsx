@@ -198,9 +198,9 @@ export default async function SettingsPage() {
               />
               <p className="mt-1 text-xs text-ink-muted">
                 Clava el corte en un día fijo, que no se corre solo. Útil
-                para abrir un período puntual. Si la completás, manda esta
-                fecha y se ignoran los días de al lado. Pasada la fecha no se
-                puede reservar nada: hay que moverla o vaciarla.
+                para abrir un período puntual. Mientras no llegue, manda esta
+                fecha y se ignoran los días de al lado; pasada, se vuelve sola
+                a los días de al lado.
               </p>
             </div>
 
