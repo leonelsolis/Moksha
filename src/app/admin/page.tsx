@@ -396,6 +396,8 @@ export default async function AdminAppointmentsPage({ searchParams }: Props) {
                         <AppointmentActions
                           id={appointment.id}
                           canCancel={isActive}
+                          date={appointment.date}
+                          time={formatMinute(appointment.startMinute)}
                         />
                       </div>
                     </li>

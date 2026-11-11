@@ -3,27 +3,37 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 
-import { cancelAppointmentAsAdmin, deleteAppointment } from "@/app/actions/admin";
+import {
+  cancelAppointmentAsAdmin,
+  deleteAppointment,
+  rescheduleAppointment,
+} from "@/app/actions/admin";
 import { emptyActionState } from "@/lib/action-state";
 import { Icon } from "@/components/Icon";
 
 /**
- * Cancelar o eliminar un turno desde el panel.
+ * Mover, cancelar o eliminar un turno desde el panel.
  *
- * Las dos acciones piden confirmación en el mismo lugar, con textos distintos
- * porque hacen cosas distintas: cancelar libera el horario y deja registro;
- * eliminar borra la fila y los datos del cliente, sin vuelta atrás.
+ * Las tres abren el mismo lugar debajo del turno, con textos distintos porque
+ * hacen cosas distintas: mover cambia el día y la hora y deja todo lo demás
+ * como estaba; cancelar libera el horario y deja registro; eliminar borra la
+ * fila y los datos del cliente, sin vuelta atrás.
  */
 
-type Mode = "cancel" | "delete";
+type Mode = "move" | "cancel" | "delete";
 
 export function AppointmentActions({
   id,
   canCancel,
+  date,
+  time,
 }: {
   id: number;
-  /** Solo los turnos que todavía ocupan el horario se pueden cancelar. */
+  /** Solo los turnos que todavía ocupan el horario se pueden cancelar o mover. */
   canCancel: boolean;
+  /** Dónde está hoy el turno, para arrancar el formulario con eso puesto. */
+  date: string;
+  time: string;
 }) {
   const [mode, setMode] = useState<Mode | null>(null);
 
@@ -35,11 +45,71 @@ export function AppointmentActions({
     deleteAppointment,
     emptyActionState,
   );
+  const [moveState, moveAction] = useActionState(
+    rescheduleAppointment,
+    emptyActionState,
+  );
 
   const errorMessage =
     (!cancelState.ok && cancelState.message) ||
     (!deleteState.ok && deleteState.message) ||
     null;
+
+  if (mode === "move") {
+    return (
+      <form
+        action={moveAction}
+        className="w-full rounded-sm border border-line-strong bg-surface-sunken p-2.5 sm:w-auto"
+      >
+        <input type="hidden" name="id" value={id} />
+
+        <p className="text-xs text-ink-soft">
+          Cambia solo el día y la hora. La seña, los datos y las notas quedan
+          como están.
+        </p>
+
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <label className="block">
+            <span className="field-label">Día</span>
+            <input
+              type="date"
+              name="date"
+              defaultValue={date}
+              required
+              className="input tabular"
+            />
+          </label>
+
+          <label className="block">
+            <span className="field-label">Hora</span>
+            <input
+              type="time"
+              name="time"
+              defaultValue={time}
+              required
+              className="input tabular"
+            />
+          </label>
+
+          <MoveButton />
+
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setMode(null)}
+          >
+            Volver
+          </button>
+        </div>
+
+        {/* El choque de horarios se avisa acá, pegado al formulario, porque lo
+            que hay que hacer es elegir otra hora sin perder lo escrito. */}
+        {!moveState.ok && moveState.message ? (
+          <p className="mt-2 text-xs text-danger">{moveState.message}</p>
+        ) : null}
+      </form>
+    );
+  }
 
   if (mode) {
     const isDelete = mode === "delete";
@@ -73,13 +143,23 @@ export function AppointmentActions({
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       {canCancel ? (
-        <button
-          type="button"
-          className="btn btn-danger btn-sm"
-          onClick={() => setMode("cancel")}
-        >
-          Cancelar
-        </button>
+        <>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setMode("move")}
+          >
+            Mover
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-danger btn-sm"
+            onClick={() => setMode("cancel")}
+          >
+            Cancelar
+          </button>
+        </>
       ) : null}
 
       <button
@@ -96,6 +176,16 @@ export function AppointmentActions({
         <span className="text-xs text-danger">{errorMessage}</span>
       ) : null}
     </div>
+  );
+}
+
+function MoveButton() {
+  const { pending } = useFormStatus();
+
+  return (
+    <button type="submit" className="btn btn-primary btn-sm" disabled={pending}>
+      {pending ? "Moviendo…" : "Mover turno"}
+    </button>
   );
 }
 

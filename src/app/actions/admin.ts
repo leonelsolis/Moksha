@@ -35,7 +35,7 @@ import { checkMercadoPagoToken, mercadoPagoToken } from "@/lib/mercadopago";
 import { notifyProfessionalCancellation } from "@/lib/notify";
 import { updateSettings, type SettingKey, type Settings } from "@/lib/settings";
 import { generateToken } from "@/lib/tokens";
-import { enqueueMessages } from "@/lib/whatsapp";
+import { enqueueMessages, rescheduleRebooking } from "@/lib/whatsapp";
 import {
   APPOINTMENT_NOTES_MAX,
   isValidEmail,
@@ -382,6 +382,139 @@ export async function cancelAppointmentAsAdmin(
 
   refreshAll();
   return ok("Turno cancelado. El horario quedó libre.");
+}
+
+/**
+ * Mover un turno a otro día u horario.
+ *
+ * Existe para no tener que cancelar y volver a cargar: así la fila es la misma
+ * y se conserva todo lo que cuelga de ella —la seña cobrada, el medio de pago,
+ * el token de cancelación que ya tiene la clienta, las notas y el grupo de la
+ * visita—. Con el camino viejo eso se perdía, y nadie se acordaba después si
+ * esa clienta había señado o no.
+ *
+ * Solo cambia cuándo. El servicio, la duración y la profesional quedan como
+ * estaban: para cambiar cualquiera de esos tres, lo correcto sigue siendo
+ * cancelar y cargar de nuevo, porque es otro turno.
+ */
+export async function rescheduleAppointment(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const user = await requireUser();
+
+  const id = Number(formData.get("id"));
+  if (!id) return error("Turno no encontrado.");
+
+  const date = String(formData.get("date") ?? "");
+  if (!isValidDateString(date)) return error("Elegí la fecha nueva.");
+
+  const startMinute = parseMinute(String(formData.get("time") ?? ""));
+  if (startMinute === null) return error("Elegí la hora nueva.");
+
+  // Con el alcance aplicado: una profesional no puede mover el turno de otra
+  // mandando un id ajeno en el formulario.
+  const [appointment] = await db
+    .select()
+    .from(appointments)
+    .where(withScope(user, appointments.professionalId, eq(appointments.id, id)))
+    .limit(1);
+
+  if (!appointment) return error("Turno no encontrado.");
+
+  if (
+    appointment.status !== "booked" &&
+    appointment.status !== "pending_payment"
+  ) {
+    return error(
+      "Ese turno está cancelado o vencido: no se puede mover. Cargá uno nuevo.",
+    );
+  }
+
+  // La duración viaja con el turno: se mueve el bloque entero, no se redefine.
+  const duration = appointment.endMinute - appointment.startMinute;
+  const endMinute = startMinute + duration;
+
+  if (endMinute > MINUTES_IN_A_DAY) {
+    return error("El turno no puede terminar después de la medianoche.");
+  }
+
+  if (date === appointment.date && startMinute === appointment.startMinute) {
+    return error("El turno ya está ese día a esa hora.");
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+
+  // Igual que en el alta: las retenciones vencidas del día de destino se
+  // sueltan antes, porque el índice único las sigue contando.
+  await releaseExpiredHolds(appointment.professionalId, date, now);
+
+  const clashes = await overlappingAppointments({
+    professionalId: appointment.professionalId,
+    date,
+    startMinute,
+    endMinute,
+    // El turno que se está moviendo no choca consigo mismo.
+    excludeId: id,
+  });
+
+  if (clashes.length > 0) {
+    const clash = clashes[0];
+    const who = [clash.firstName, clash.lastName].filter(Boolean).join(" ");
+
+    return error(
+      `Ahí se pisa con el turno de ${formatMinute(clash.startMinute)} a ` +
+        `${formatMinute(clash.endMinute)}${who ? ` de ${who}` : ""}. ` +
+        "Elegí otro horario.",
+    );
+  }
+
+  /*
+   * La comprobación de choques viaja dentro del propio UPDATE, por lo mismo
+   * que en el alta: entre el SELECT de arriba y esta escritura hay una ventana
+   * en la que alguien puede tomar el horario desde la web.
+   */
+  const result = await client.execute({
+    sql: `UPDATE appointments
+             SET date = ?, start_minute = ?, end_minute = ?
+           WHERE id = ?
+             AND status IN ('booked', 'pending_payment')
+             AND NOT EXISTS (
+               SELECT 1 FROM appointments AS otro
+                WHERE otro.professional_id = ? AND otro.date = ?
+                  AND otro.id <> ?
+                  AND (otro.status = 'booked'
+                       OR (otro.status = 'pending_payment'
+                           AND otro.hold_expires_at > ?))
+                  AND otro.start_minute < ? AND otro.end_minute > ?
+             )`,
+    args: [
+      date,
+      startMinute,
+      endMinute,
+      id,
+      appointment.professionalId,
+      date,
+      id,
+      now,
+      endMinute,
+      startMinute,
+    ],
+  });
+
+  if (result.rowsAffected === 0) {
+    return error("Ese horario acaba de ocuparse. Recargá la agenda y probá otro.");
+  }
+
+  // El recordatorio para volver a reservar se cuenta desde la fecha del turno,
+  // así que al moverlo hay que recalcularlo: si no, saldría en la fecha vieja.
+  await rescheduleRebooking(id, date);
+
+  refreshAll();
+
+  return ok(
+    `Turno movido al ${formatDateLong(date)} a las ${formatMinute(startMinute)}.`,
+  );
 }
 
 /**
