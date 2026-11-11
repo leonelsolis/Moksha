@@ -294,6 +294,36 @@ export async function enqueueMessages(options: {
   }
 }
 
+/**
+ * Corre el recordatorio de un turno que se movió de fecha.
+ *
+ * El recordatorio se cuenta desde el día del turno, así que al reprogramarlo
+ * la fila encolada queda apuntando a la fecha vieja. No se puede resolver
+ * encolando de nuevo: el índice único por (turno, tipo) lo rechaza. Se mueve
+ * el que ya existe, y solo si sigue pendiente: uno ya mandado o descartado es
+ * historia y no se toca.
+ */
+export async function rescheduleRebooking(appointmentId: number, date: string) {
+  try {
+    const settings = await getSettings();
+    if (!settingBool(settings, "whatsapp_enabled")) return;
+
+    await db
+      .update(whatsappMessages)
+      .set({ dueDate: addDays(date, rebookDays(settings)) })
+      .where(
+        and(
+          eq(whatsappMessages.appointmentId, appointmentId),
+          eq(whatsappMessages.kind, "rebooking"),
+          isNull(whatsappMessages.sentAt),
+          isNull(whatsappMessages.dismissedAt),
+        ),
+      );
+  } catch (e) {
+    console.warn("[whatsapp] no se pudo mover el recordatorio:", e);
+  }
+}
+
 /* ── La cola ─────────────────────────────────────────────────────────── */
 
 export type PendingMessage = {
